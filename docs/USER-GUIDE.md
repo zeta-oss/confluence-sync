@@ -158,7 +158,9 @@ folder_title: "Title for This Folder"
 
 - **Folder hierarchy** → Confluence folders/pages
 - **README.md** in a folder becomes a separate page (ADR 0011)
-- **Cross-link conversion** — relative `.md` links and anchor links converted to Confluence links
+- **Cross-link conversion** — relative `.md` links and anchor links are converted to native Confluence links.
+  - **Pre-scan Title Mapping**: Prior to content preparation, `confluence-sync` automatically pre-scans all Markdown files in your directory to build a local map of file-to-title mapping. This ensures that cross-page relative and anchor links can be fully resolved *even on a clean sync* when Confluence page IDs are not yet registered.
+  - **Fabric-safe Fallback Mode**: If `confluence_base_url` is configured in your config, pages will link directly to secure Confluence page ID urls (Fabric-safe links). On a clean sync where page IDs are not yet known, the tool gracefully falls back to Confluence macro `ac:link` format, promoting them to direct page ID links on the next incremental sync.
 - **Git metadata footer** — "Last updated · commit hash · View on GitHub"
 - **Mermaid → PNG** — ` ```mermaid ` blocks rendered to PNG and uploaded as attachments
 - **Local images** → Confluence attachments

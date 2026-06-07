@@ -103,39 +103,136 @@ Phases:
 
 ## 6. Local development
 
-```bash
-# Prerequisites: Python 3.11+, git, nox (pip install nox)
-git clone https://github.com/zeta-oss/confluence-sync.git
-cd confluence-sync
-./scripts/bootstrap-dev.sh   # creates .venv/, pip install -e .[dev]
-source .venv/bin/activate
+### 6.1 Prerequisites
 
-make test          # nox -s test cli
-make smoke         # needs CONFLUENCE_TOKEN
-```
+Ensure you have the following tools installed on your development machine:
+- **Python**: `3.11`, `3.12`, or `3.13` (recommended: `3.13`).
+- **Git**: Installed and configured.
+- **Node.js & npm**: Required if rendering Mermaid diagrams locally during tests.
+  - Setup: `npm install -g @mermaid-js/mermaid-cli`
+- **Homebrew**: Required to run the local package/formula integration tests (`brew test`).
+- **Nox**: (Optional) Highly recommended to run multi-version testing. Install with: `pip install nox`.
+
+### 6.2 Initial Environment Setup
+
+Follow these steps to clone the repository and configure your isolated local development environment:
+
+1. **Clone the Repository**:
+   ```bash
+   git clone https://github.com/zeta-oss/confluence-sync.git
+   cd confluence-sync
+   ```
+
+2. **Run Dev Bootstrap**:
+   You can either run the bootstrap script directly or use the `make install` shortcut:
+   ```bash
+   make install
+   # This executes `./scripts/bootstrap-dev.sh` under the hood, which:
+   # - Creates a local Python virtual environment `.venv/`
+   # - Installs the package in editable mode with development dependencies: `pip install -e .[dev]`
+   ```
+
+3. **Activate the Virtual Environment**:
+   ```bash
+   source .venv/bin/activate
+   ```
+
+4. **Verify the Installation**:
+   Verify that your local `confluence-sync` package is accessible and points to your working directory:
+   ```bash
+   which confluence-sync
+   confluence-sync --version
+   ```
+
+### 6.3 Atlassian Credentials Configuration
+
+To run live smoke tests (`make smoke`, `make smoke-fallback`, etc.), you must configure credentials to authenticate with your Atlassian Confluence instance:
+
+1. **Generate an API Token**:
+   - Go to [Atlassian API Tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
+   - Click **Create API token**, give it a name (e.g., `confluence-sync-dev`), and copy the token.
+
+2. **Create the Local Credentials File**:
+   Store the token in the dedicated global user directory. This is excluded from git repositories to prevent accidental leakage:
+   ```bash
+   mkdir -p ~/.local/confluence-sync
+   cat <<EOF >> ~/.local/confluence-sync/.env
+   CONFLUENCE_TOKEN=your_atlassian_api_token_here
+   EOF
+   ```
+   *Note: If your Confluence Cloud organization restricts ephemeral space creation, you can also add your personal or designated space as a fallback:*
+   ```bash
+   echo "CONFLUENCE_SMOKE_FALLBACK_SPACE=your_personal_space_key" >> ~/.local/confluence-sync/.env
+   ```
+
+---
 
 ## 7. Testing strategy
 
-Six layers (see [E2E-TEST-PLAN.md](E2E-TEST-PLAN.md)):
+We utilize a comprehensive **six-layer testing hierarchy** to catch regressions at every phase, ranging from fast, offline unit checks to full live execution on consumer repositories. This strategy is fully documented in [E2E-TEST-PLAN.md](E2E-TEST-PLAN.md).
 
-| Layer | Command | When | Token |
-|-------|---------|------|-------|
-| L1 Unit + CLI | `make test` | Every commit | No |
-| L2 Shell scripts | `make test-scripts` | Every commit (especially `scripts/`) | No |
-| L3 Pipeline (mocked) | `make test-pipeline` | Every commit (especially `sync.py`, `smoke*.py`) | No |
-| L1–L3 combined | `make test-all` | Every change touching sync/smoke/scripts | No |
-| L4 Live smoke | `make smoke` | Once per release candidate | Yes |
-| L4 fallback path | `make smoke-fallback` | Optional; personal-space provisioning | Yes |
-| L5 Release rehearsal | `make release-rehearsal` | Mandatory before tag (same machine/commit) | Yes |
-| L6 Consumer dry-run | `make verify-consumers` | After push/install | Yes |
+| Layer | Name | Command | Description | Needs Token? |
+| :--- | :--- | :--- | :--- | :--- |
+| **L1** | Unit + CLI | `make test` | Fast offline pytest suite + CLI arg/subprocess tests | No |
+| **L2** | Shell Integration | `make test-scripts` | Validates helper functions, traps, and preflight gates | No |
+| **L3** | Pipeline | `make test-pipeline` | Mocked HTTP pipeline checking end-to-end sync logic | No |
+| **L4** | Live Smoke | `make smoke` | Real Confluence lifecycle (ephemeral space sync & verify) | Yes |
+| **L4** | Fallback Smoke | `make smoke-fallback` | Tests the fallback path using a pre-existing space | Yes |
+| **L5** | Release Rehearsal | `make release-rehearsal` | Full dry-run release simulation (dist/brew/checks) | Yes |
+| **L6** | Consumer Validation | `make verify-consumers` | Syncs actual production documents in dry-run mode | Yes |
 
-Coverage gate: ≥72% on core modules (`fail_under = 72` in `pyproject.toml`).
+To run all offline checks (L1, L2, L3) at once, use the combined shortcut:
+```bash
+make test-all
+```
 
-**Cleanup policy (ADR 0024):**
-- All Git repos and state dirs go in `pytest tmp_path`
-- `HOME` is monkeypatched per test — no test touches `~/.local/confluence-sync/`
-- Live smoke copies fixture to tmp, never mutates committed files
-- Ephemeral Confluence spaces deleted via `SmokeProvisioner.destroy_workspace`
+### 7.1 Detailed Testing Instructions
+
+#### Running L1, L2, L3 (Offline)
+These tests require no credentials or internet connection, making them ideal to run on every commit or file save.
+```bash
+# Run standard unit tests and CLI tests
+make test
+
+# Run script-level validation tests
+make test-scripts
+
+# Run mocked sync pipeline integration tests
+make test-pipeline
+
+# Run all linting and static analysis (ruff)
+make lint
+```
+
+#### Running L4 Live Smoke (`make smoke`)
+Live smoke tests verify actual interaction with Confluence Cloud:
+- **Ephemeral Space Mode**: The test automatically provisions a temporary space (`CS<unique-id>`), uploads media files, creates and updates pages, asserts that relative cross-links and cross-page anchor links render correctly, and then cleanly deletes the space on completion or crash (via an `EXIT` signal trap).
+- **Space-restricted Fallback Mode**: If your Atlassian user does not have permission to create spaces, use `make smoke-fallback`. This will utilize your fallback space configured in `.env`, using run-unique page prefixes (e.g. `CSYNC-Smoke-Root-<id>`) to avoid page collisions, and cleanly deletes its sub-tree on termination.
+
+```bash
+# Ephemeral space run (recommended)
+make smoke
+
+# Fallback space run (restricted environments)
+make smoke-fallback
+```
+
+#### Running L5 Release Rehearsal (`make release-rehearsal`)
+Crucial to run before any production release. This simulates the exact release process (building sdist, updating Homebrew Formula, installing from a temporary local tap, and running `brew test`) without making any git commits or tags:
+```bash
+make release-rehearsal
+```
+
+#### Running L6 Consumer Validation (`make verify-consumers`)
+Validates that the current codebase is 100% backward compatible and runs successfully against massive, real-world consumer documentation structures (`zeta-ai-product-strategy` and `writing-work` repositories):
+```bash
+make verify-consumers
+```
+
+### 7.2 Safety & Cleanup Guarantees
+
+- **No Home Pollution**: The test suite patches `HOME` and `project_root` to run in isolated `pytest` temporary paths. It will never mutate your real local files or real state directories during unit/integration tests.
+- **Leak Prevention**: Both `make smoke` and `make release-rehearsal` register `EXIT` traps. If a test run is cancelled or crashes mid-way, the temporary Confluence space/pages are automatically wiped from Atlassian. Check that no `smoke-session.json` remains in `~/.local/confluence-sync/` after runs.
 
 ## 8. Adding a feature
 
