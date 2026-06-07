@@ -162,6 +162,78 @@ class ContentPreparer:
         self.confluence_base_url = (confluence_base_url or "").rstrip("/")
         self.mermaid_cache_dir = Path(mermaid_cache_dir).resolve() if mermaid_cache_dir else None
 
+    def pre_scan_titles(self, directory: Path, root_path: Path, source_folder: Optional[str] = None) -> None:
+        """
+        Pre-scan all Markdown files in the directory to populate self.file_to_title.
+        This is critical for cross-page links to resolve correctly on a clean sync.
+        """
+        from confluence_sync.ignore_handler import IgnoreHandler
+        from confluence_sync.title_mapping import get_title_mapping_loader
+
+        ignore_handler = IgnoreHandler(root_path)
+
+        # Process Markdown files in this directory
+        md_file_list = [p for p in directory.glob('*.md') if not p.name.startswith('.')]
+        md_files = sorted(md_file_list, key=_natural_sort_key_for_md)
+        has_numbered_files = any(_numeric_prefix_and_rest(p.stem) for p in md_files)
+
+        for md_file in md_files:
+            if ignore_handler.should_ignore(md_file):
+                continue
+
+            try:
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # Extract title from first heading
+                title = None
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if line.startswith('# '):
+                        title = line[2:].strip()
+                        break
+                    elif line.startswith('#'):
+                        title = line[1:].strip()
+                        break
+
+                if not title:
+                    title = md_file.stem.replace('_', ' ').replace('-', ' ').title()
+
+                if has_numbered_files:
+                    parsed = _numeric_prefix_and_rest(md_file.stem)
+                    if parsed:
+                        prefix_str, rest_stem = parsed
+                        stem_as_title = md_file.stem.replace('_', ' ').replace('-', ' ').title()
+                        if title == stem_as_title:
+                            suffix = rest_stem.replace('_', ' ').replace('-', ' ').title()
+                        else:
+                            suffix = title
+                        title = f"{prefix_str} - {suffix}"
+
+                # Apply title mapping if present
+                title_mapper = get_title_mapping_loader()
+                title = title_mapper.get_page_title(
+                    directory=directory,
+                    filename=md_file.name,
+                    default_title=title
+                )
+
+                rel_path = str(md_file.relative_to(root_path))
+                file_key = f"{source_folder}/{rel_path}" if source_folder else rel_path
+
+                # Store in self.file_to_title (both absolute-like and relative paths for lookup robustness)
+                self.file_to_title[file_key] = title
+                self.file_to_title[rel_path] = title
+
+            except Exception:
+                pass
+
+        # Recursively process subdirectories
+        for item in directory.iterdir():
+            if item.is_dir() and not item.name.startswith('.'):
+                if not ignore_handler.should_ignore_directory(item):
+                    self.pre_scan_titles(item, root_path, source_folder)
+
     def markdown_to_storage_format(
         self,
         markdown_content: str,
@@ -650,14 +722,20 @@ class ContentPreparer:
                             break
 
                 if resolved_title or page_id:
-                    # Fabric-safe: when confluence_base_url is set, never use ac:link (Fabric does not support it)
+                    # Fabric-safe: when confluence_base_url is set, use direct pageId links when available.
+                    # Fall back to title-based ac:links during clean syncs where pageIds are not yet known.
                     if self.confluence_base_url:
                         if page_id:
                             view_url = f"{self.confluence_base_url}/pages/viewpage.action?pageId={page_id}"
                             if anchor:
                                 view_url += f"#{escape_xml(anchor)}"
                             return f'<a href="{escape_xml(view_url)}">{link_text}</a>'
-                        # No page_id (e.g. target not synced yet): use placeholder so page still syncs
+                        elif resolved_title:
+                            escaped_title = escape_title_for_confluence(resolved_title)
+                            if anchor:
+                                return f'<ac:link ac:anchor="{escape_xml(anchor)}"><ri:page ri:content-title="{escaped_title}"/><ac:plain-text-link-body><![CDATA[{link_text}]]></ac:plain-text-link-body></ac:link>'
+                            return f'<ac:link><ri:page ri:content-title="{escaped_title}"/><ac:plain-text-link-body><![CDATA[{link_text}]]></ac:plain-text-link-body></ac:link>'
+                        # No page_id and no resolved_title (e.g. target not synced yet): use placeholder so page still syncs
                         return f'<a href="#">{link_text}</a>'
                     # Legacy: title-based ac:link (when not using Fabric-safe mode)
                     if resolved_title:

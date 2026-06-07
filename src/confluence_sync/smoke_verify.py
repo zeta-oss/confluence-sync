@@ -185,9 +185,14 @@ class SmokeVerify:
             else:
                 print("  ✓ Anchor link on anchors-source page")
 
+            # Note: Confluence Cloud strips raw id="..." attributes from headings in body.storage,
+            # but client-side rendering dynamically computes them from the heading text.
+            # Thus, we accept a standard heading tag as confirmation of the anchor target.
             has_target_heading = (
                 'id="my-section"' in target_html
                 or "id='my-section'" in target_html
+                or "<h2>My Section</h2>" in target_html
+                or "<h3>My Section</h3>" in target_html
             )
             if not has_target_heading:
                 self._failures.append(

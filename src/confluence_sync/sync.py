@@ -350,6 +350,16 @@ def sync_destination(
         preparer.file_to_title = file_to_title
         preparer.file_to_page_id = file_to_page_id
 
+        # Pre-scan directories to populate preparer.file_to_title for all discovered files
+        for folder_config in source_config["folders"]:
+            folder_path = project_root / folder_config["path"]
+            if folder_path.exists():
+                preparer.pre_scan_titles(
+                    directory=folder_path,
+                    root_path=folder_path,
+                    source_folder=folder_config["path"]
+                )
+
         # Phase 1: Prepare all content
         progress.start_step("Preparing content")
         all_prepared: List[PreparedContent] = []
