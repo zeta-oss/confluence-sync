@@ -11,5 +11,6 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+.env
 *.whl
 *.tar.gz
