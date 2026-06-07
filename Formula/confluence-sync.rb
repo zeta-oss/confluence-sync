@@ -12,12 +12,12 @@ class ConfluenceSync < Formula
 
   resource "requests" do
     url "https://files.pythonhosted.org/packages/source/r/requests/requests-2.32.3.tar.gz"
-    sha256 "55365417734eb18255590a9f9b84e76f42e71c6a90ddd1e97d7e60e3a3ebcd75"
+    sha256 "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760"
   end
 
   resource "markdown" do
     url "https://files.pythonhosted.org/packages/source/M/Markdown/Markdown-3.6.tar.gz"
-    sha256 "ed4f41f6daecbe9173e3732324b212c3b8b64e5a7774a2cc45e94d558efb4d00"
+    sha256 "ed4f41f6daecbeeb96e576ce414c41d2d876daa9a16cb35fa8ed8c2ddfad0224"
   end
 
   resource "pyyaml" do
@@ -27,7 +27,7 @@ class ConfluenceSync < Formula
 
   resource "tabulate" do
     url "https://files.pythonhosted.org/packages/source/t/tabulate/tabulate-0.9.0.tar.gz"
-    sha256 "0095b12bf5966d58a9a2bc06f8ce3e3968d9c4e4a99282fa1a9e3f9f50e9de5e"
+    sha256 "0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c"
   end
 
   resource "click" do
