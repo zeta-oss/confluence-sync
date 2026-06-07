@@ -49,31 +49,26 @@ This is the most common point of friction.
     If you rename a local file, a naive sync tool would delete the old page in Confluence and create a new one, causing links to break, page history to vanish, and comments to be destroyed.
 *   **The Solution**: `confluence-sync` uses a local **Sync State** file (`sync-state.jsonl`) that maps each file key (e.g., `docs/getting-started.md`) to its permanent Confluence `page_id`. This allows the tool to track renames, preserve page IDs, and update titles in-place without losing comments, history, or child attachments.
 
-### 2.3 Pure Containers vs. Rich Primitives (Folders as Pages)
+### 2.3 Structure vs. Content: Native Folder Support
 
 *   **In Git**:
-    Directories are pure container constructs. A folder cannot hold text, images, or commit metadata of its own; only files can contain text.
+    Directories are pure structural containers. A folder cannot hold text, images, or commit metadata of its own; only files can contain text.
 *   **In Confluence**:
-    Confluence has no concept of a "naked" folder. Every node in the hierarchy is a **Page**. Folders are actually Page nodes that happen to have child pages nested under them. 
-*   **The Solution**: `confluence-sync` automatically creates a page in Confluence to act as the "Folder". To prevent this folder page from being completely blank, if you place a `README.md` or an `index.md` inside a local directory, the tool will automatically use its content to populate the body of that folder's Confluence page, perfectly blending container hierarchy with rich documentation.
+    Historically, Confluence had no native "folder" concept—directories had to be represented as regular Page nodes, meaning structural directories and content pages competed for names and namespaces.
+    Modern Confluence Cloud REST API v2 introduces **Native Folder Support** (`/wiki/api/v2/folders`). Native Folders are structural-only containers with absolutely no body content.
+*   **The Solution**: `confluence-sync` leverages REST API v2 to create native folders for your local subdirectories. 
+    - Folders are kept completely separate from pages.
+    - Because folders are structure-only, they have no text body. If you have a `README.md` or `index.md` inside a local subdirectory, `confluence-sync` automatically uploads it as a standard **Page nested under that folder**, rather than trying to write content to the folder itself.
+    - Directory-level links (like `[Guide](../guides/)`) are automatically parsed and mapped to point to that folder's `README.md` or `index.md` page for maximum convenience.
 
-### 2.4 Unified Namespace for Pages and Folders (Folder Title Collisions)
+### 2.4 Separated Folder and Page Namespaces (No Collisions)
 
 *   **The Concept**:
-    Because Confluence models folders as standard Pages, **folder titles are subject to the same global uniqueness constraint** as regular documents.
-*   **The Challenge**:
-    A very common pitfall is having structure like this:
-    ```text
-    docs/
-    ├── development/
-    │   └── setup/                # Directory "setup" -> Page "Setup"
-    │       └── environment.md
-    └── production/
-        └── setup/                # Directory "setup" -> Page "Setup"
-            └── environment.md
-    ```
-    Even though these "setup" directories reside under completely separate parents (`development/` vs `production/`), **Confluence will block the creation of the second "Setup" folder** because a page with that title already exists in the flat Space namespace.
-*   **The Solution**: Rename your directories to be more descriptive (e.g., `development-setup/` and `production-setup/`), or use a local `.confluence-mapping.yaml` file in the parent directories to map the folder name to a unique, Confluence-friendly title.
+    Because native Folders and Pages are different primitives in Confluence v2, **folders and pages reside in separate namespaces**.
+*   **The Benefit**:
+    A folder named `setup` will **never** collide with a page named `setup`. They can happily co-exist within the same parent or space, entirely resolving title collision bugs between structure and content.
+*   **The Constraint**:
+    Folders can also co-exist with the same title under different parent folders. However, under the *same* parent, folder titles must be unique. `confluence-sync` tracks folders separately in its sync state to ensure we always bind child pages to the correct, intended folder parent ID. Use `.confluence-mapping.yaml` to override any folder titles if customization is required.
 
 ### 2.5 Markdown Links: Supported Formats & Constraints
 
@@ -267,8 +262,8 @@ Use `--force-update` to re-sync all pages regardless of content hash (useful aft
 |---------|----------|
 | 401 Unauthorized | Check `CONFLUENCE_TOKEN` in `~/.local/confluence-sync/.env` |
 | "Not inside a Git repository" | `cd` into a repo with `.git/` or use `--project-root` |
-| Title conflict error | Add `.confluence-mapping.yaml` with unique title for conflicting page (see Section 2.1 & 2.4). |
-| Folder title collision | Folders also act as pages. If two folders have the same name (e.g. `setup`), they will collide globally (see Section 2.4). Map them to unique titles using `.confluence-mapping.yaml`. |
+| Title conflict error | Add `.confluence-mapping.yaml` with unique title for conflicting page (see Section 2.1). |
+| Folder title collision | Native folders support duplicate titles space-wide under different parents, but are restricted under the same parent directory. If folders collide under the same parent, customize titles via `.confluence-mapping.yaml` (see Section 2.4). |
 | Cross-page links are broken | Verify that your relative links include the `.md` extension. `[page](../page)` is unsupported; use `[page](../page.md)` (see Section 2.5). |
 | Anchors are not working | Confluence Cloud strips standard heading `id` attributes from HTML during API retrieval. The sync verify Fallback check matches heading text, but ensure your links strictly use `#heading-text-slug` formatted lowercase (see Section 2.5). |
 | Missing or broken images | Ensure image file paths reside completely *inside* your git repository boundary. Absolute local paths or relative paths walking outside the Git root (e.g., `../../external.png`) are blocked for safety (see Section 2.6). |
