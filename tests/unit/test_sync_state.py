@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from confluence_sync.sync_state import (
     append_page_history,
     compute_content_hash,
@@ -14,7 +10,6 @@ from confluence_sync.sync_state import (
     get_state_file_path,
     load_sync_state,
 )
-
 
 # ---------------------------------------------------------------------------
 # compute_content_signature

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 _EXAMPLE_CONFIG = """\
 # confluence-sync.yml
@@ -39,7 +38,7 @@ _GITIGNORE_ENTRY = "destinations/\n"
 
 def run_init(args: argparse.Namespace) -> int:
     """Entry point for `confluence-sync init`."""
-    from confluence_sync.paths import resolve_project_root, ProjectRootError
+    from confluence_sync.paths import ProjectRootError, resolve_project_root
 
     try:
         root = resolve_project_root(args.project_root)
@@ -69,7 +68,7 @@ def run_init(args: argparse.Namespace) -> int:
             gitignore_path.write_text(content + _GITIGNORE_ENTRY, encoding="utf-8")
             print(f"✓ Updated: {gitignore_path}")
         else:
-            print(f"  (gitignore already has destinations/ entry)")
+            print("  (gitignore already has destinations/ entry)")
     else:
         gitignore_path.write_text(_GITIGNORE_ENTRY, encoding="utf-8")
         print(f"✓ Created: {gitignore_path}")

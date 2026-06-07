@@ -8,7 +8,8 @@ See ADR 0020: Config discovery precedence (--config → P1 → P2).
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 import yaml
 
 

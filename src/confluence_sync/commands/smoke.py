@@ -26,8 +26,8 @@ def run_smoke(args: argparse.Namespace) -> int:
 
 
 def _load_smoke_dest(args: argparse.Namespace) -> tuple[Any, Dict[str, Any]]:
+    from confluence_sync.config import get_destination, load_destination_config
     from confluence_sync.paths import SyncContext
-    from confluence_sync.config import load_destination_config, get_destination
 
     ctx = SyncContext.from_args(
         project_root_arg=getattr(args, "project_root", None),
@@ -68,10 +68,10 @@ def _smoke_reset(args: argparse.Namespace) -> int:
 def _smoke_run(args: argparse.Namespace) -> int:
     """Full smoke sequence: provision workspace → sync → verify → destroy."""
     from confluence_sync.paths import ProjectRootError
-    from confluence_sync.sync import sync_destination
     from confluence_sync.smoke_cleanup import SmokeCleanup
+    from confluence_sync.smoke_provision import EphemeralWorkspace, SmokeProvisioner
     from confluence_sync.smoke_verify import SmokeVerify
-    from confluence_sync.smoke_provision import SmokeProvisioner, EphemeralWorkspace
+    from confluence_sync.sync import sync_destination
 
     fixture_dir = Path(__file__).parent.parent.parent.parent / "tests" / "live_smoke" / "fixture"
     if not fixture_dir.exists():

@@ -10,7 +10,6 @@ import yaml
 from confluence_sync.config import (
     ConfigError,
     get_destination,
-
     load_destination_config,
     resolve_credentials,
     validate_destination_config,

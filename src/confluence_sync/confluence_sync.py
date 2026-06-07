@@ -13,12 +13,10 @@ Clear boundaries:
 """
 
 import json
-import re
-import time
 import threading
-from pathlib import Path
-from typing import Dict, Optional, List, Tuple, Any, Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     import requests
@@ -28,7 +26,6 @@ except ImportError:
 
 from confluence_sync.content_preparer import PreparedContent
 from confluence_sync.report_generator import SyncResult
-from confluence_sync.sync_state import compute_content_hash
 
 
 class ParentPageNotFoundError(Exception):
@@ -49,12 +46,12 @@ class DuplicateTitleError(Exception):
 class TitleConflictError(Exception):
     """
     Raised when a page or folder title conflict cannot be resolved.
-    
+
     This exception is raised when attempting to create or update a page/folder
     with a title that already exists in the space, and the existing item cannot
     be found or reused. Unlike the old behavior (which would append suffixes),
     this error requires manual resolution.
-    
+
     Attributes:
         message: Error message describing the conflict
     """
@@ -64,11 +61,11 @@ class TitleConflictError(Exception):
 class HierarchyValidationError(Exception):
     """
     Raised when page or folder hierarchy validation fails.
-    
+
     This exception is raised when a page or folder is found to be in an
     incorrect location in the Confluence hierarchy (e.g., wrong parent,
     outside destination root, etc.).
-    
+
     Attributes:
         message: Error message describing the hierarchy issue
     """
@@ -78,15 +75,15 @@ class HierarchyValidationError(Exception):
 class ConfluenceSync:
     """
     Syncs prepared content to Confluence via REST API.
-    
+
     This class handles all Confluence API interactions.
     It operates on PreparedContent objects from the content preparer.
     """
-    
+
     def __init__(self, base_url: str, username: str, token: str, space_key: str, space_id: Optional[str] = None):
         """
         Initialize Confluence sync client.
-        
+
         Args:
             base_url: Confluence base URL (e.g., https://yourcompany.atlassian.net)
             username: Confluence username/email
@@ -100,29 +97,29 @@ class ConfluenceSync:
             self.base_url = f"{base_url}/wiki"
         else:
             self.base_url = base_url
-        
+
         # API URL should be base_url/wiki/api/v2 (REST API v2)
         self.api_url = f"{self.base_url}/api/v2"
         self.username = username
         self.token = token
         self.space_key = space_key
         self.auth = HTTPBasicAuth(username, token)
-        
+
         # Increase timeout for large content
         # Use tuple format: (connect_timeout, read_timeout)
         # Connect timeout: 10s (connection establishment)
         # Read timeout: 60s (waiting for response data)
         self.timeout = (10, 60)  # (connect, read) timeouts in seconds
-        
+
         # Cache for page lookups (title -> page_id)
         self.page_cache: Dict[str, str] = {}
-        
+
         # Resolve space_id if not provided (after timeout is set)
         if space_id:
             self.space_id = space_id
         else:
             self.space_id = self._get_space_id(space_key)
-    
+
     def _paginate_v2(
         self,
         endpoint: str,
@@ -131,60 +128,60 @@ class ConfluenceSync:
     ) -> List[Dict[str, Any]]:
         """
         Handle cursor-based pagination for REST API v2.
-        
+
         v2 uses cursor-based pagination with 'cursor' parameter
         instead of offset-based pagination.
-        
+
         Args:
             endpoint: API endpoint to call
             params: Additional query parameters
             max_results: Maximum total results to fetch
-            
+
         Returns:
             List of all results across pages
         """
         all_results = []
         cursor = None
         params = params or {}
-        
+
         while len(all_results) < max_results:
             if cursor:
                 params['cursor'] = cursor
-            
+
             response = self._make_request('GET', endpoint, params=params)
             data = response.json()
-            
+
             results = data.get('results', [])
             all_results.extend(results)
-            
+
             # Check for next page
             links = data.get('_links', {})
             next_link = links.get('next')
             if not next_link:
                 break
-            
+
             # Extract cursor from next link
             # Format: /wiki/api/v2/...?cursor=xxx
             import urllib.parse
             parsed = urllib.parse.urlparse(next_link)
             query_params = urllib.parse.parse_qs(parsed.query)
             cursor = query_params.get('cursor', [None])[0]
-            
+
             if not cursor:
                 break
-        
+
         return all_results
-    
+
     def _get_space_id(self, space_key: str) -> str:
         """
         Get space ID from space key using REST API v2.
-        
+
         Args:
             space_key: Confluence space key
-            
+
         Returns:
             Space ID as string
-            
+
         Raises:
             Exception: If space not found
         """
@@ -212,7 +209,7 @@ class ConfluenceSync:
         params = {"body-format": "storage"} if include_body else None
         response = self._make_request("GET", f"/pages/{page_id}", params=params)
         return response.json()
-    
+
     def _make_request_internal(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Internal method to make API request (without retry logic)."""
         endpoint = endpoint.lstrip('/')
@@ -220,7 +217,7 @@ class ConfluenceSync:
         headers = kwargs.pop('headers', {})
         headers.setdefault('Content-Type', 'application/json')
         headers.setdefault('Accept', 'application/json')
-        
+
         response = requests.request(
             method,
             url,
@@ -231,7 +228,7 @@ class ConfluenceSync:
         )
         response.raise_for_status()
         return response
-    
+
     def _make_request(
         self,
         method: str,
@@ -242,21 +239,21 @@ class ConfluenceSync:
     ) -> requests.Response:
         """
         Make API request with retry and exponential backoff.
-        
+
         Args:
             method: HTTP method (GET, POST, PUT, DELETE)
             endpoint: API endpoint
             max_retries: Maximum number of retry attempts
             base_delay: Base delay in seconds for exponential backoff            **kwargs: Additional arguments for requests
-            
+
         Returns:
             Response object
-            
+
         Raises:
             requests.exceptions.HTTPError: If request fails after all retries
         """
         last_exception = None
-        
+
         for attempt in range(max_retries + 1):
             try:
                 response = self._make_request_internal(method, endpoint, **kwargs)
@@ -268,7 +265,7 @@ class ConfluenceSync:
                 last_exception = e
                 if e.response is not None:
                     status_code = e.response.status_code
-                    
+
                     # Rate limited - retry with Retry-After header
                     if status_code == 429:
                         retry_after = e.response.headers.get('Retry-After')
@@ -283,7 +280,7 @@ class ConfluenceSync:
                             print(f"  Rate limited (429). Waiting {delay:.1f}s before retry...")
                             time.sleep(delay)
                             continue
-                    
+
                     # Server error (5xx) - retry
                     if status_code >= 500:
                         delay = base_delay * (2 ** attempt)
@@ -291,7 +288,7 @@ class ConfluenceSync:
                             print(f"  Server error {status_code}. Retrying in {delay:.1f}s...")
                             time.sleep(delay)
                             continue
-                    
+
                     # Client error (4xx) - don't retry, but show details
                     # Store error_detail and status_code on response BEFORE consuming it
                     # (status_code may become None after response is consumed)
@@ -312,9 +309,9 @@ class ConfluenceSync:
                                 # Try to store text if JSON fails
                                 if hasattr(e.response, 'text'):
                                     e.response._error_detail = {'message': e.response.text[:500]}
-                                    print(f"  DEBUG: Stored text as _error_detail")
+                                    print("  DEBUG: Stored text as _error_detail")
                                 print(f"  Response: {e.response.text[:500]}")
-                            except:
+                            except Exception:
                                 pass
                 raise
             except requests.exceptions.ConnectionError as e:
@@ -333,16 +330,16 @@ class ConfluenceSync:
                     continue
                 else:
                     print(f"  Timeout error after {max_retries + 1} attempts. Giving up.")
-            except Exception as e:
+            except Exception:
                 # Other unexpected errors - don't retry
                 raise
             raise
-        
+
         # If we get here, all retries exhausted
         if last_exception:
             raise last_exception
         raise Exception("Request failed after retries")
-    
+
     def get_space_homepage_id(self) -> Optional[str]:
         """Get the homepage ID for the space using REST API v2."""
         try:
@@ -364,9 +361,9 @@ class ConfluenceSync:
         except Exception as e:
             print(f"WARNING: Could not get space homepage: {e}")
             return None
-    
+
     # ========== Folder Operations (REST API v2) ==========
-    
+
     def create_folder(
         self,
         title: str,
@@ -376,12 +373,12 @@ class ConfluenceSync:
     ) -> Tuple[str, str]:
         """
         Create a folder using REST API v2.
-        
+
         Args:
             title: Folder title
             space_id: Confluence space ID
             parent_id: Optional parent folder or page ID
-            
+
         Returns:
             Tuple of (folder_id, status)
         """
@@ -389,10 +386,10 @@ class ConfluenceSync:
             "spaceId": space_id,
             "title": title
         }
-        
+
         if parent_id:
             folder_data["parentId"] = str(parent_id)
-        
+
         try:
             response = self._make_request('POST', '/folders', json=folder_data)
             folder = response.json()
@@ -409,34 +406,34 @@ class ConfluenceSync:
                     # Try to parse error_detail from response if not already stored
                     try:
                         error_detail = e.response.json()
-                    except:
+                    except Exception:
                         error_detail = None
-                
+
                 if error_detail and isinstance(error_detail, dict):
                     # v2 API error format: {"errors": [{"title": "...", "code": "...", ...}]}
                     errors = error_detail.get('errors', [])
                     is_already_exists = False
                     for error in errors:
                         error_title = error.get('title', '')
-                        error_code = error.get('code', '')
+                        error.get('code', '')
                         # Check if error indicates folder already exists
-                        if ('already exists' in error_title.lower() or 
-                            'duplicate' in error_title.lower() or 
+                        if ('already exists' in error_title.lower() or
+                            'duplicate' in error_title.lower() or
                             'same title' in error_title.lower()):
                             is_already_exists = True
                             break
-                    
+
                     if is_already_exists:
                         # Check for title conflict: folder with same title under DIFFERENT parent
                         print(f"  ℹ Folder '{title}' already exists, checking for conflicts...")
-                        
+
                         # Find ALL folders with this title
                         all_folders = self.find_folders_by_title_space_wide(title, root_page_id=root_page_id)
-                        
+
                         # Check if any exist under the expected parent (update candidate)
                         folder_under_expected_parent = None
                         folder_under_different_parent = None
-                        
+
                         for folder_id, actual_parent_id in all_folders:
                             if parent_id and str(actual_parent_id) == str(parent_id):
                                 # Found under expected parent = update candidate
@@ -447,7 +444,7 @@ class ConfluenceSync:
                             else:
                                 # Found under different parent = conflict
                                 folder_under_different_parent = (folder_id, actual_parent_id)
-                        
+
                         if folder_under_expected_parent:
                             # Update candidate - return existing folder
                             folder_id, _ = folder_under_expected_parent
@@ -468,7 +465,7 @@ class ConfluenceSync:
                             print(f"  ⚠ Folder '{title}' exists but parent relationship unclear")
                             return None, 'title_conflict'
             raise
-    
+
     def get_folder(self, folder_id: str) -> Optional[Dict[str, Any]]:
         """Get folder by ID using REST API v2."""
         try:
@@ -478,7 +475,7 @@ class ConfluenceSync:
             if e.response and e.response.status_code == 404:
                 return None
             raise
-    
+
     def delete_folder(self, folder_id: str) -> bool:
         """Delete folder using REST API v2."""
         try:
@@ -487,7 +484,7 @@ class ConfluenceSync:
         except Exception as e:
             print(f"  ✗ Error deleting folder {folder_id}: {e}")
             return False
-    
+
     def find_folder_by_title(
         self,
         title: str,
@@ -496,45 +493,45 @@ class ConfluenceSync:
     ) -> Optional[Tuple[str, Optional[str]]]:
         """
         Find folder by title in space.
-        
+
         Tries v2 API first, falls back to CQL search (v1) if v2 fails.
-        
+
         Args:
             title: Folder title to search for
             space_id: Confluence space ID
             parent_id: Optional parent folder or page ID to limit search
-            
+
         Returns:
             Tuple of (folder_id, parent_id) or None if not found
         """
         # NOTE: v2 `/folders` search endpoint returns 500 errors in Confluence Cloud (as of Jan 2026)
         # Skip v2 and go directly to CQL search which works reliably
-        
+
         # Use CQL search (v1 API) - more reliable
         try:
             # Escape special characters in title for CQL
             escaped_title = title.replace('"', '\\"')
             cql = f'space = {self.space_key} AND type = folder AND title = "{escaped_title}"'
-            
+
             url = f"{self.base_url}/rest/api/content/search"
             params = {'cql': cql, 'limit': 10, 'expand': 'ancestors'}
-            
+
             response = requests.get(url, params=params, auth=self.auth, timeout=self.timeout)
             response.raise_for_status()
             results = response.json().get('results', [])
-            
+
             for folder in results:
                 folder_id = str(folder['id'])
-                
+
                 # Get parent from ancestors (last ancestor is direct parent)
                 ancestors = folder.get('ancestors', [])
                 folder_parent_id = None
                 if ancestors:
                     # The last ancestor is the direct parent
                     folder_parent_id = str(ancestors[-1]['id'])
-                
+
                 parent_id_str = str(parent_id) if parent_id else None
-                
+
                 if parent_id:
                     # Check if this folder is under the specified parent
                     # Check all ancestors (folder could be nested deeper)
@@ -543,19 +540,19 @@ class ConfluenceSync:
                         return (folder_id, folder_parent_id)
                 else:
                     return (folder_id, folder_parent_id)
-            
+
             # If parent_id specified but no exact match, return first result as fallback
             if parent_id and results:
                 folder = results[0]
                 ancestors = folder.get('ancestors', [])
                 folder_parent_id = str(ancestors[-1]['id']) if ancestors else None
                 return (str(folder['id']), folder_parent_id)
-            
+
             return None
         except Exception as e:
             print(f"WARNING: Error searching for folder '{title}' via CQL: {e}")
             return None
-    
+
     def find_folders_by_title_space_wide(
         self,
         title: str,
@@ -563,51 +560,51 @@ class ConfluenceSync:
     ) -> List[Tuple[str, Optional[str]]]:
         """
         Find ALL folders with a given title in the space.
-        
+
         Used for title conflict detection - checks if folders with same title
         exist under different parents.
-        
+
         Args:
             title: Folder title to search for
             root_page_id: Optional root page ID - only return folders under this root
-            
+
         Returns:
             List of tuples (folder_id, parent_id) for all matching folders
         """
         try:
             escaped_title = title.replace('"', '\\"')
             cql = f'space = {self.space_key} AND type = folder AND title = "{escaped_title}"'
-            
+
             url = f"{self.base_url}/rest/api/content/search"
             params = {'cql': cql, 'limit': 100, 'expand': 'ancestors'}
-            
+
             response = requests.get(url, params=params, auth=self.auth, timeout=self.timeout)
             response.raise_for_status()
             results = response.json().get('results', [])
-            
+
             folders = []
             for folder in results:
                 folder_id = str(folder['id'])
-                
+
                 # Get parent from ancestors
                 ancestors = folder.get('ancestors', [])
                 folder_parent_id = None
                 if ancestors:
                     folder_parent_id = str(ancestors[-1]['id'])
-                
+
                 # Filter by root if specified
                 if root_page_id:
                     ancestor_ids = [str(a['id']) for a in ancestors]
                     if str(root_page_id) not in ancestor_ids and str(folder_id) != str(root_page_id):
                         continue  # Not under root, skip
-                
+
                 folders.append((folder_id, folder_parent_id))
-            
+
             return folders
         except Exception as e:
             print(f"WARNING: Error searching for folders '{title}' space-wide: {e}")
             return []
-    
+
     def find_pages_by_title_space_wide(
         self,
         title: str,
@@ -615,51 +612,51 @@ class ConfluenceSync:
     ) -> List[Tuple[str, Optional[str]]]:
         """
         Find ALL pages with a given title in the space.
-        
+
         Used for title conflict detection - checks if pages with same title
         exist under different parents.
-        
+
         Args:
             title: Page title to search for
             root_page_id: Optional root page ID - only return pages under this root
-            
+
         Returns:
             List of tuples (page_id, parent_id) for all matching pages
         """
         try:
             escaped_title = title.replace('"', '\\"')
             cql = f'space = {self.space_key} AND type = page AND title = "{escaped_title}"'
-            
+
             url = f"{self.base_url}/rest/api/content/search"
             params = {'cql': cql, 'limit': 100, 'expand': 'ancestors'}
-            
+
             response = requests.get(url, params=params, auth=self.auth, timeout=self.timeout)
             response.raise_for_status()
             results = response.json().get('results', [])
-            
+
             pages = []
             for page in results:
                 page_id = str(page['id'])
-                
+
                 # Get parent from ancestors
                 ancestors = page.get('ancestors', [])
                 page_parent_id = None
                 if ancestors:
                     page_parent_id = str(ancestors[-1]['id'])
-                
+
                 # Filter by root if specified
                 if root_page_id:
                     ancestor_ids = [str(a['id']) for a in ancestors]
                     if str(root_page_id) not in ancestor_ids and str(page_id) != str(root_page_id):
                         continue  # Not under root, skip
-                
+
                 pages.append((page_id, page_parent_id))
-            
+
             return pages
         except Exception as e:
             print(f"WARNING: Error searching for pages '{title}' space-wide: {e}")
             return []
-    
+
     def update_folder(
         self,
         folder_id: str,
@@ -668,12 +665,12 @@ class ConfluenceSync:
     ) -> Dict[str, Any]:
         """
         Update a folder's title or parent using REST API v2.
-        
+
         Args:
             folder_id: ID of folder to update
             title: New title (optional)
             parent_id: New parent ID (optional)
-            
+
         Returns:
             Updated folder data
         """
@@ -682,10 +679,10 @@ class ConfluenceSync:
             update_data["title"] = title
         if parent_id:
             update_data["parentId"] = str(parent_id)
-        
+
         response = self._make_request('PUT', f'/folders/{folder_id}', json=update_data)
         return response.json()
-    
+
     def list_folder_children(
         self,
         folder_id: str,
@@ -694,18 +691,18 @@ class ConfluenceSync:
     ) -> Tuple[List[Dict], List[Dict]]:
         """
         List children of a folder (folders and/or pages).
-        
+
         Args:
             folder_id: Folder ID to list children for
             include_folders: Whether to include child folders
             include_pages: Whether to include child pages
-            
+
         Returns:
             Tuple of (child_folders, child_pages)
         """
         child_folders = []
         child_pages = []
-        
+
         # Get child folders using v2 API
         if include_folders:
             try:
@@ -714,7 +711,7 @@ class ConfluenceSync:
                 child_folders = data.get('results', [])
             except Exception as e:
                 print(f"WARNING: Could not list child folders for {folder_id}: {e}")
-        
+
         # Get child pages using v2 API
         if include_pages:
             try:
@@ -723,13 +720,13 @@ class ConfluenceSync:
                 child_pages = data.get('results', [])
             except Exception as e:
                 print(f"WARNING: Could not list child pages for {folder_id}: {e}")
-        
+
         return child_folders, child_pages
-    
+
     def list_child_pages_under_parent(self, parent_id: str) -> List[Dict]:
         """
         List child pages under a parent (folder or page). Tries folder API first, then page API.
-        
+
         Returns list of page dicts with at least 'id' and 'title'.
         """
         # Try folder children first
@@ -746,9 +743,9 @@ class ConfluenceSync:
             return data.get('results', [])
         except Exception:
             return []
-    
+
     # ========== Page Operations (REST API v2) ==========
-    
+
     def create_page_v2(
         self,
         title: str,
@@ -758,13 +755,13 @@ class ConfluenceSync:
     ) -> Tuple[str, int]:
         """
         Create a page using REST API v2.
-        
+
         Args:
             title: Page title
             body: Storage format content
             space_id: Confluence space ID
             parent_id: Optional parent folder or page ID
-            
+
         Returns:
             Tuple of (page_id, version)
         """
@@ -777,21 +774,21 @@ class ConfluenceSync:
                 "value": body
             }
         }
-        
+
         if parent_id:
             page_data["parentId"] = str(parent_id)
-        
+
         response = self._make_request('POST', '/pages', json=page_data)
         page = response.json()
         return str(page['id']), page['version']['number']
-    
+
     def delete_page_v2(self, page_id: str) -> bool:
         """
         Delete a page using REST API v2.
-        
+
         Args:
             page_id: ID of page to delete
-            
+
         Returns:
             True if deleted successfully, False otherwise
         """
@@ -804,9 +801,9 @@ class ConfluenceSync:
                 return True
             print(f"  ✗ Error deleting page {page_id}: {e}")
             return False
-    
+
     # ========== Hierarchy Validation (REST API v2) ==========
-    
+
     def _is_descendant_of_root(
         self,
         item_id: str,
@@ -815,58 +812,55 @@ class ConfluenceSync:
     ) -> bool:
         """
         Check if a page or folder is a descendant of the root by walking up the parent chain.
-        
+
         Args:
             item_id: ID of page or folder to check
             root_id: Root page/folder ID
             item_type: Type of item ('page' or 'folder')
-            
+
         Returns:
             True if item is a descendant of root, False otherwise
         """
         if str(item_id) == str(root_id):
             return True
-        
+
         visited = set()  # Prevent infinite loops
         current_id = item_id
-        current_type = item_type
-        
+
         while current_id and current_id not in visited:
             visited.add(current_id)
-            
+
             try:
                 # Try to get parent ID - check both folder and page APIs
                 parent_id = None
-                
+
                 # Try folder first (faster check)
                 try:
                     folder_data = self.get_folder(current_id)
                     if folder_data:
                         parent_id = folder_data.get('parentId')
-                        current_type = 'folder'
-                except:
+                except Exception:
                     pass
-                
+
                 # If not a folder, try page
                 if parent_id is None:
                     try:
                         response = self._make_request('GET', f'/pages/{current_id}')
                         page_data = response.json()
                         parent_id = page_data.get('parentId')
-                        current_type = 'page'
-                    except:
+                    except Exception:
                         pass
-                
+
                 if parent_id is None:
                     # No parent - reached root level, but not our root
                     return False
-                
+
                 if str(parent_id) == str(root_id):
                     return True
-                
+
                 # Move up the chain
                 current_id = str(parent_id)
-                
+
             except requests.exceptions.HTTPError as e:
                 if e.response and e.response.status_code == 404:
                     return False
@@ -874,9 +868,9 @@ class ConfluenceSync:
                 return False
             except Exception:
                 return False
-        
+
         return False
-    
+
     def validate_folder_hierarchy(
         self,
         folder_id: str,
@@ -886,26 +880,26 @@ class ConfluenceSync:
     ) -> Tuple[bool, List[str]]:
         """
         Validate that a folder is in the correct hierarchy location using REST API v2.
-        
+
         Args:
             folder_id: Folder ID to validate
             expected_parent_id: Expected parent folder or page ID
             root_page_id: Root page ID for the destination
             folder_path: Folder path for error messages
-            
+
         Returns:
             Tuple of (is_valid, list_of_issues)
         """
         issues = []
-        
+
         try:
             folder_data = self.get_folder(folder_id)  # Uses v2
             if not folder_data:
                 issues.append(f"Folder '{folder_path}' (ID: {folder_id}) not found")
                 return False, issues
-            
+
             current_parent_id = folder_data.get('parentId')
-            
+
             # Check if parent matches expected
             if expected_parent_id:
                 if current_parent_id != str(expected_parent_id):
@@ -919,9 +913,9 @@ class ConfluenceSync:
                 )
         except Exception as e:
             issues.append(f"Could not validate hierarchy for folder '{folder_path}': {e}")
-        
+
         return len(issues) == 0, issues
-    
+
     def validate_page_hierarchy(
         self,
         page_id: str,
@@ -932,24 +926,24 @@ class ConfluenceSync:
         """
         Validate that a page is in the correct hierarchy location using REST API v2.
         Pages should be under folders (not under other pages, except root-level).
-        
+
         Args:
             page_id: Page ID to validate
             expected_parent_id: Expected parent folder or page ID
             root_page_id: Root page ID for the destination
             file_path: File path for error messages
-            
+
         Returns:
             Tuple of (is_valid, list_of_issues)
         """
         issues = []
-        
+
         try:
             # Get page data using v2
             response = self._make_request('GET', f'/pages/{page_id}')
             page_data = response.json()
             current_parent_id = page_data.get('parentId')
-            
+
             # Check if parent matches expected (can be folder or page)
             if expected_parent_id:
                 if current_parent_id != str(expected_parent_id):
@@ -963,32 +957,32 @@ class ConfluenceSync:
                 )
         except Exception as e:
             issues.append(f"Could not validate hierarchy for page '{file_path}': {e}")
-        
+
         return len(issues) == 0, issues
-    
+
     def find_page_by_title(self, title: str, parent_id: Optional[str] = None) -> Optional[str]:
         """
         Find a page by title under a specific parent using REST API v2.
-        
+
         IMPORTANT: parent_id is required for safe lookup. Page titles are only unique
         within a parent, not across the entire space. Searching without a parent
         can return the wrong page if multiple pages share the same title.
-        
+
         Args:
             title: Page title to search for
             parent_id: REQUIRED parent page ID to limit search (cannot safely search space-wide)
-            
+
         Returns:
             Page ID if found under the specified parent, None otherwise
         """
         # REQUIRE parent_id - never search space-wide to avoid returning wrong page
         if not parent_id:
             return None
-        
+
         cache_key = f"{parent_id}:{title}"
         if cache_key in self.page_cache:
             return self.page_cache[cache_key]
-        
+
         try:
             # Use v2 pages endpoint with spaceId and title filter
             params = {
@@ -996,10 +990,10 @@ class ConfluenceSync:
                 'title': title,
                 'limit': 100
             }
-            
+
             # Use pagination helper for large result sets
             results = self._paginate_v2('/pages', params=params, max_results=1000)
-            
+
             # Filter to pages under the specific parent
             for page in results:
                 page_parent_id = page.get('parentId')
@@ -1007,16 +1001,16 @@ class ConfluenceSync:
                     page_id = str(page['id'])
                     self.page_cache[cache_key] = page_id
                     return page_id
-            
+
             # Not found under this parent
             return None
-                
+
         except Exception as e:
             print(f"WARNING: Error searching for page '{title}' under parent {parent_id}: {e}")
-            print(f"  This may indicate a connectivity issue or the parent page may not exist.")
-        
+            print("  This may indicate a connectivity issue or the parent page may not exist.")
+
         return None
-    
+
     def find_page_by_title_space_wide(
         self,
         title: str,
@@ -1025,23 +1019,23 @@ class ConfluenceSync:
     ) -> Optional[Tuple[str, Optional[str]]]:
         """
         Search for a page by title across entire space using CQL (v1 API) - fallback only.
-        
+
         WARNING: This method should only be used as a last resort when:
         - Page exists in Confluence but not in sync state
         - Parent-scoped search failed
         - "Already exists" error occurred during creation
-        
+
         IMPORTANT: Only returns pages that are descendants of root_page_id (if provided).
         Pages outside the destination root hierarchy are ignored.
-        
+
         Uses CQL search (v1 API) because v2 /pages endpoint has a bug where spaceId
         filter doesn't work correctly with title filter (returns pages from other spaces).
-        
+
         Args:
             title: Page title to search for
             expected_parent_id: Optional expected parent ID for comparison
             root_page_id: Optional root page ID - only return pages under this root
-            
+
         Returns:
             Tuple of (page_id, actual_parent_id) or None if not found
             actual_parent_id is None if page is root-level
@@ -1049,34 +1043,34 @@ class ConfluenceSync:
         print(f"  ⚠ WARNING: Performing space-wide search for page '{title}' (fallback only)")
         if root_page_id:
             print(f"    Only searching under destination root (ID: {root_page_id})")
-        
+
         try:
             # Use CQL search (v1 API) - correctly filters by space, unlike v2 /pages
             escaped_title = title.replace('"', '\\"')
             cql = f'space = {self.space_key} AND type = page AND title = "{escaped_title}"'
-            
+
             url = f"{self.base_url}/rest/api/content/search"
             params = {'cql': cql, 'limit': 25, 'expand': 'ancestors'}
-            
+
             response = requests.get(url, params=params, auth=self.auth, timeout=self.timeout)
             response.raise_for_status()
             results = response.json().get('results', [])
-            
+
             if not results:
                 return None
-            
+
             # Filter results to only include pages under root_page_id (if provided)
             valid_results = []
             for page in results:
                 page_id = str(page.get('id'))
-                
+
                 # Get ancestors from expand (v1 API provides full ancestor list)
                 ancestors = page.get('ancestors', [])
                 ancestor_ids = [str(a['id']) for a in ancestors]
-                
+
                 # Get parent ID (last ancestor is direct parent)
                 page_parent_id = str(ancestors[-1]['id']) if ancestors else None
-                
+
                 # If root_page_id is provided, page must be a descendant of it
                 if root_page_id:
                     # Check if root_page_id is in the ancestor chain
@@ -1092,30 +1086,30 @@ class ConfluenceSync:
                 else:
                     # No root_page_id - accept all results (backward compatibility)
                     valid_results.append((page_id, page_parent_id))
-            
+
             if not valid_results:
                 return None
-            
+
             if len(valid_results) > 1:
                 print(f"  ⚠ WARNING: Multiple pages found with title '{title}' under root ({len(valid_results)} pages)")
-                print(f"    Using first result. This may not be the correct page.")
-            
+                print("    Using first result. This may not be the correct page.")
+
             # Use first valid result
             page_id, actual_parent_id = valid_results[0]
-            
+
             # Compare with expected parent if provided
             if expected_parent_id and actual_parent_id != expected_parent_id:
                 print(f"  ⚠ WARNING: Page '{title}' found under different parent")
                 print(f"    Expected: {expected_parent_id}, Found: {actual_parent_id}")
-                print(f"    Page will be moved to correct parent during update")
-            
+                print("    Page will be moved to correct parent during update")
+
             print(f"  ✓ Found page '{title}' (ID: {page_id}, parent: {actual_parent_id})")
             return (page_id, actual_parent_id)
-                
+
         except Exception as e:
             print(f"  ⚠ ERROR: Could not perform space-wide search for page '{title}': {e}")
             return None
-    
+
     def find_or_create_page(
         self,
         file_path: str,
@@ -1133,11 +1127,11 @@ class ConfluenceSync:
     ) -> Tuple[str, str, Optional[int], str]:
         """
         Unified method to find or create a page using file_path-only lookup.
-        
+
         Lookup hierarchy:
         1. Check sync state (by file_path) - use stored page_id if found
         2. If not in sync state, attempt creation with title suffix sequence if needed
-        
+
         Args:
             file_path: File path (used for sync state lookup and error messages)
             title: Page title to use (may be modified from original)
@@ -1151,7 +1145,7 @@ class ConfluenceSync:
             previous_title: Previous page title (to detect title changes)
             previous_version: Previous page version number (to detect version conflicts)
             root_page_id: Optional root page ID for hierarchy validation
-            
+
         Returns:
             Tuple of (page_id, status, version, actual_title_used)
             status: 'found', 'created', 'updated', 'skipped'
@@ -1162,7 +1156,7 @@ class ConfluenceSync:
         status = 'unknown'
         version = None
         actual_title_used = title  # Default to provided title
-        
+
         # Step 1: Check sync state first (path-based lookup) - PRIMARY METHOD
         if sync_state_entry and sync_state_entry.get('page_id'):
             existing_id = sync_state_entry['page_id']
@@ -1181,7 +1175,7 @@ class ConfluenceSync:
                 if e.response is not None:
                     try:
                         status_code = e.response.status_code
-                    except:
+                    except Exception:
                         pass
                 # Also check the exception string for 404
                 if status_code == 404 or (status_code is None and '404' in str(e)):
@@ -1199,12 +1193,12 @@ class ConfluenceSync:
                 existing_id = None
                 status = 'unknown'
                 actual_title_used = title  # Reset to provided title
-        
+
         # Step 2: If we have an existing_id, check if update is needed
         if existing_id:
             # Check if content, parent, or title changed
             needs_update = False
-            
+
             # First, try quick hash-based comparison if we have previous_content_hash
             if previous_content_hash and content_hash == previous_content_hash:
                 # Content hash matches - check only parent and title
@@ -1216,13 +1210,13 @@ class ConfluenceSync:
                     current_parent_id = current_data.get('parentId')
                     current_parent_id = current_parent_id if current_parent_id else None
                     new_parent_id = str(parent_id) if parent_id else None
-                    
+
                     # Check if parent changed
                     parent_changed = current_parent_id != new_parent_id
-                    
+
                     # Check if title changed
                     title_changed = current_title != title
-                    
+
                     if parent_changed or title_changed:
                         needs_update = True
                         if title_changed:
@@ -1239,7 +1233,7 @@ class ConfluenceSync:
                     if e.response is not None:
                         try:
                             status_code = e.response.status_code
-                        except:
+                        except Exception:
                             pass
                     # Also check the exception string for 404
                     if status_code == 404 or (status_code is None and '404' in str(e)):
@@ -1264,25 +1258,25 @@ class ConfluenceSync:
                     version = current_data['version']['number']
                     current_content = self._page_storage_body(current_data)
                     current_title = current_data.get('title', '')
-                    
+
                     # Get current parent ID
                     current_parent_id = current_data.get('parentId')
                     current_parent_id = current_parent_id if current_parent_id else None
                     new_parent_id = str(parent_id) if parent_id else None
-                    
+
                     # Compute hash of current content for comparison
                     from confluence_sync.sync_state import compute_content_hash
                     current_content_hash = compute_content_hash(current_content)
-                    
+
                     # Check if content changed (using hash comparison)
                     content_changed = current_content_hash != content_hash
-                    
+
                     # Check if parent changed
                     parent_changed = current_parent_id != new_parent_id
-                    
+
                     # Check if title changed
                     title_changed = current_title != title
-                    
+
                     if content_changed or parent_changed or title_changed:
                         needs_update = True
                         if content_changed:
@@ -1301,7 +1295,7 @@ class ConfluenceSync:
                     if e.response is not None:
                         try:
                             status_code = e.response.status_code
-                        except:
+                        except Exception:
                             pass
                     # Also check the exception string for 404
                     if status_code == 404 or (status_code is None and '404' in str(e)):
@@ -1318,7 +1312,7 @@ class ConfluenceSync:
                 except Exception as e:
                     print(f"  ⚠ Could not check current page state: {e}")
                     needs_update = True  # Assume update needed if we can't check
-            
+
             # Perform update if needed (only if existing_id is still set)
             if existing_id and needs_update:
                 try:
@@ -1346,11 +1340,11 @@ class ConfluenceSync:
                 status = 'skipped'
                 return existing_id, status, version, actual_title_used
             # If existing_id is None (page was deleted), fall through to creation step
-        
+
         # Step 3: No existing page found - attempt creation (single attempt, no suffixing)
         if not existing_id:
             print(f"  ℹ No existing page found for '{file_path}', creating new page with title '{title}'")
-            
+
             try:
                 # Create page with original title using REST API v2
                 page_id, version = self.create_page_v2(
@@ -1359,7 +1353,7 @@ class ConfluenceSync:
                     space_id=self.space_id,
                     parent_id=parent_id  # Can be folder_id or page_id
                 )
-                
+
                 # Validate page hierarchy after creation (Phase 7)
                 if root_page_id:
                     is_valid, issues = self.validate_page_hierarchy(
@@ -1371,20 +1365,20 @@ class ConfluenceSync:
                     if not is_valid:
                         print(f"  ⚠ Hierarchy validation issues for page '{title}': {issues}")
                         # Don't fail - just warn
-                
+
                 return page_id, 'created', version, title
             except requests.exceptions.HTTPError as create_error:
                 # Check if "already exists" error
                 status_code = None
                 error_message = ''
                 error_data = None
-                
+
                 if create_error.response is not None:
                     try:
                         status_code = create_error.response.status_code
-                    except:
+                    except Exception:
                         status_code = None
-                    
+
                     # Get error detail stored by _make_request
                     if hasattr(create_error.response, '_error_detail'):
                         error_data = getattr(create_error.response, '_error_detail', None)
@@ -1393,7 +1387,7 @@ class ConfluenceSync:
                             error_data = create_error.response.json()
                         except Exception:
                             error_data = {}
-                    
+
                     # Extract error message from v2 API error structure
                     if isinstance(error_data, dict):
                         # v2 API uses 'errors' array with 'title' and optional 'detail'
@@ -1409,31 +1403,31 @@ class ConfluenceSync:
                             error_message = error_data.get('message', '') or error_data.get('data', {}).get('message', '')
                     else:
                         error_message = ''
-                
+
                 if not error_message:
                     error_message = str(create_error)
-                
+
                 # Check if "already exists" error
                 error_lower = error_message.lower()
                 is_already_exists = (
                     status_code == 400 and (
-                        'already exists' in error_lower or 
-                        'same title' in error_lower or 
+                        'already exists' in error_lower or
+                        'same title' in error_lower or
                         'page already exists' in error_lower
                     )
                 )
-                
+
                 if is_already_exists:
                     # Check for title conflict: page with same title under DIFFERENT parent
                     print(f"  ℹ Page '{title}' already exists, checking for conflicts...")
-                    
+
                     # Find ALL pages with this title
                     all_pages = self.find_pages_by_title_space_wide(title, root_page_id=root_page_id)
-                    
+
                     # Check if any exist under the expected parent (update candidate)
                     page_under_expected_parent = None
                     page_under_different_parent = None
-                    
+
                     for page_id, actual_parent_id in all_pages:
                         if parent_id and str(actual_parent_id) == str(parent_id):
                             # Found under expected parent = update candidate
@@ -1444,7 +1438,7 @@ class ConfluenceSync:
                         else:
                             # Found under different parent = conflict
                             page_under_different_parent = (page_id, actual_parent_id)
-                    
+
                     if page_under_expected_parent:
                         # Update candidate - return existing page
                         existing_page_id, _ = page_under_expected_parent
@@ -1494,7 +1488,7 @@ class ConfluenceSync:
                             f"400 Bad Request: {error_message}"
                         ) from create_error
                     raise
-    
+
     def _update_page(
         self,
         page_id: str,
@@ -1511,7 +1505,7 @@ class ConfluenceSync:
     ) -> Tuple[str, str, Optional[int], str]:
         """
         Update an existing page in Confluence using REST API v2.
-        
+
         Returns:
             Tuple of (page_id, status, version, actual_title_used)
             status: 'updated' or 'skipped'
@@ -1528,19 +1522,19 @@ class ConfluenceSync:
                 title_to_use = title  # Try new title
             else:
                 title_to_use = current_title_in_confluence  # Use existing title
-        
+
         try:
             # Get current page data using v2
             response = self._make_request('GET', f'/pages/{page_id}')
             page_data = response.json()
             version = page_data['version']['number']
-            
+
             # Check for version conflict
             if previous_version is not None and version != previous_version:
                 print(f"  ⚠ Warning: Version conflict detected for page ID {page_id}")
                 print(f"    Expected version {previous_version}, found {version}")
-                print(f"    Page was modified in Confluence since last sync. Proceeding with update (last-write-wins).")
-            
+                print("    Page was modified in Confluence since last sync. Proceeding with update (last-write-wins).")
+
             # Prepare update with title_to_use
             update_data = {
                 "id": page_id,
@@ -1552,20 +1546,20 @@ class ConfluenceSync:
                     "value": storage_format
                 }
             }
-            
+
             if parent_id:
                 update_data["parentId"] = str(parent_id)
-            
+
             # Perform update using PUT /pages/{id}
             response = self._make_request('PUT', f'/pages/{page_id}', json=update_data)
             updated_page = response.json()
-            
+
             # Validate page hierarchy after update if parent changed (Phase 7)
             # Note: We don't have root_page_id in this method, so skip validation here
             # Hierarchy validation should be done at the sync level if needed
-            
+
             return page_id, 'updated', updated_page['version']['number'], title_to_use
-            
+
         except requests.exceptions.HTTPError as e:
             # Check if it's a 404 (page deleted)
             if e.response and e.response.status_code == 404:
@@ -1573,28 +1567,28 @@ class ConfluenceSync:
                 raise PageNotFoundError(
                     f"Page ID {page_id} no longer exists (404). Cannot update deleted page."
                 ) from e
-            
+
             # Check if it's a 403 (permission denied)
             if e.response and e.response.status_code == 403:
                 try:
                     error_detail = e.response.json()
                     error_msg = error_detail.get('message', 'Forbidden')
-                except:
+                except Exception:
                     error_msg = 'Forbidden'
                 raise Exception(
                     f"Cannot update page ID {page_id} (title: '{title_to_use}'): {error_msg}. "
                     f"Page may be archived or you may not have permission."
                 ) from e
-            
+
             # Check if it's a title conflict (400)
             if e.response and e.response.status_code == 400:
                 error_data = getattr(e.response, '_error_detail', None)
                 if not error_data:
                     try:
                         error_data = e.response.json()
-                    except:
+                    except Exception:
                         error_data = {}
-                
+
                 # Extract error message from v2 API error structure
                 if isinstance(error_data, dict):
                     # v2 API uses 'errors' array with 'title' field
@@ -1605,18 +1599,18 @@ class ConfluenceSync:
                         error_msg = error_data.get('message', '')
                 else:
                     error_msg = str(e)
-                
+
                 if not error_msg:
                     error_msg = str(e)
-                
+
                 error_lower = error_msg.lower()
-                
+
                 is_title_conflict = (
-                    'already exists' in error_lower or 
-                    'same title' in error_lower or 
+                    'already exists' in error_lower or
+                    'same title' in error_lower or
                     'page already exists' in error_lower
                 )
-                
+
                 if is_title_conflict:
                     raise TitleConflictError(
                         f"Title conflict when updating page '{title_to_use}' (ID: {page_id}): "
@@ -1626,10 +1620,10 @@ class ConfluenceSync:
                     raise Exception(
                         f"Failed to update page ID {page_id} (title: '{title_to_use}'): {error_msg}"
                     ) from e
-            
+
             # Re-raise other HTTP errors
             raise
-    
+
     def create_or_update_page_from_storage(
         self,
         title: str,
@@ -1645,10 +1639,10 @@ class ConfluenceSync:
     ) -> Tuple[str, str, Optional[str], Optional[int]]:
         """
         Create or update a page in Confluence using pre-computed storage format.
-        
+
         DEPRECATED: This method is kept for backward compatibility. New code should use
         find_or_create_page() which implements the proper lookup hierarchy.
-        
+
         Args:
             title: Page title
             storage_format: Pre-computed Confluence storage format
@@ -1660,7 +1654,7 @@ class ConfluenceSync:
             previous_title: Previous page title (to detect title changes)
             previous_version: Previous page version number (to detect version conflicts)
             file_path: Optional file path (for better error messages)
-            
+
         Returns:
             Tuple of (page_id, status, content_hash, version)
         """
@@ -1674,10 +1668,10 @@ class ConfluenceSync:
                 'page_title': previous_title,
                 'version': previous_version
             }
-        
+
         # Use file_path if provided, otherwise use title as fallback
         lookup_file_path = file_path if file_path else title
-        
+
         # Delegate to find_or_create_page() which implements the proper lookup hierarchy
         try:
             page_id, status, version = self.find_or_create_page(
@@ -1694,7 +1688,7 @@ class ConfluenceSync:
                 root_page_id=None  # create_or_update_page_from_storage doesn't have root_page_id context
             )
             return page_id, status, content_hash, version
-        except (ParentPageNotFoundError, DuplicateTitleError, PageNotFoundError) as e:
+        except (ParentPageNotFoundError, DuplicateTitleError, PageNotFoundError):
             # Re-raise custom exceptions as-is
             raise
         except Exception as e:
@@ -1704,19 +1698,19 @@ class ConfluenceSync:
                 + (f" (file: '{file_path}')" if file_path else "")
                 + f": {e}"
             ) from e
-    
+
     def delete_page(self, page_id: str) -> bool:
         """
         Delete a page from Confluence (uses v2 API).
-        
+
         Args:
             page_id: Confluence page ID to delete
-            
+
         Returns:
             True if deleted successfully, False otherwise
         """
         return self.delete_page_v2(page_id)
-    
+
     def sync_prepared_content_parallel(
         self,
         prepared_contents: List[PreparedContent],
@@ -1727,45 +1721,45 @@ class ConfluenceSync:
     ) -> List[SyncResult]:
         """
         Sync prepared content to Confluence using parallel processing.
-        
+
         Pages are synced concurrently using ThreadPoolExecutor for faster performance.
         This is especially beneficial for large syncs (1000+ files).
-        
+
         Args:
             prepared_contents: List of PreparedContent objects to sync
             parallel_threads: Number of parallel threads to use (default: 5, recommended: 8-12)
             progress_callback: Optional callback function for progress updates
             root_page_id: Root page ID for ancestry validation
             force_update: If True, force update all pages even if content unchanged
-            
+
         Returns:
             List of SyncResult objects for each synced file
         """
         """
         Sync prepared content to Confluence in parallel threads.
-        
+
         Args:
             prepared_contents: List of PreparedContent objects to sync
             parallel_threads: Number of parallel threads to use
             progress_callback: Optional callback(current_count, file_display, status)
-            
+
         Returns:
             List of SyncResult objects
         """
         results: List[SyncResult] = []
         lock = threading.Lock()
         completed_count = [0]
-        
+
         # If force_update is True, set force_sync on all prepared items
         if force_update:
             for prepared in prepared_contents:
                 prepared.force_sync = True
-        
+
         def sync_single(prepared: PreparedContent) -> Optional[SyncResult]:
             """Sync a single prepared content item."""
             try:
                 prepared.status = 'syncing'
-                
+
                 # Get previous values from history
                 previous_title = None
                 previous_version = None
@@ -1774,7 +1768,7 @@ class ConfluenceSync:
                     previous_title = prepared.prev_history.get('page_title')
                     previous_version = prepared.prev_history.get('version')
                     previous_parent_id = prepared.prev_history.get('parent_id')
-                
+
                 # Use unified lookup method which implements the proper hierarchy
                 page_id, status, version, actual_title_used = self.find_or_create_page(
                     file_path=prepared.file_key,
@@ -1790,28 +1784,28 @@ class ConfluenceSync:
                     previous_version=previous_version,
                     root_page_id=root_page_id
                 )
-                
+
                 # Store actual title used for sync state
                 prepared.actual_title_used = actual_title_used
-                
+
                 prepared.status = 'synced'
                 prepared.sync_status = status
                 prepared.page_id = page_id
                 prepared.version = version
-                
+
                 # Ensure page_id is never None
                 if not page_id:
                     raise Exception(
                         f"Page '{prepared.title}' (file: '{prepared.file_key}') was processed but no page_id was returned. "
                         f"This should not happen."
                     )
-                
+
                 # Upload attachments if any
                 if hasattr(prepared, 'image_paths') and prepared.image_paths:
-                    from attachment_handler import AttachmentHandler
+                    pass
                     # Note: attachment_handler should be passed to ConfluenceSync or accessed differently
                     # For now, we'll handle this in the sync-to-confluence.py after page creation
-                
+
                 confluence_url = f"{self.base_url}/pages/viewpage.action?pageId={page_id}"
                 result = SyncResult(
                     file_path=prepared.rel_path,
@@ -1829,7 +1823,7 @@ class ConfluenceSync:
                 )
                 prepared.sync_result = result
                 return result
-                
+
             except Exception as e:
                 prepared.status = 'failed'
                 prepared.error = str(e)
@@ -1848,20 +1842,20 @@ class ConfluenceSync:
                         file_display = prepared.rel_path if len(prepared.rel_path) <= 60 else "..." + prepared.rel_path[-57:]
                         status_display = prepared.sync_status or prepared.status
                         progress_callback(completed_count[0], file_display, status_display if status_display in ['skipped', 'created', 'updated'] else None)
-        
+
         # Sync in parallel
         # Use shorter polling interval to check progress frequently
         # Set overall timeout: 30 minutes max for entire sync
         polling_interval = 30  # Check every 30 seconds
         overall_timeout = 1800  # 30 minutes total
         start_time = time.time()
-        
+
         with ThreadPoolExecutor(max_workers=parallel_threads) as executor:
             future_to_prepared = {executor.submit(sync_single, prep): prep for prep in prepared_contents}
-            
+
             remaining_futures = set(future_to_prepared.keys())
             last_progress_time = start_time
-            
+
             while remaining_futures:
                 # Check if overall timeout exceeded
                 elapsed = time.time() - start_time
@@ -1879,10 +1873,10 @@ class ConfluenceSync:
                         results.append(result)
                         future.cancel()
                     break
-                
+
                 # Wait for at least one future to complete, with short polling interval
                 done, not_done = wait(remaining_futures, timeout=polling_interval, return_when='FIRST_COMPLETED')
-                
+
                 # Process completed futures
                 for future in done:
                     prepared = future_to_prepared[future]
@@ -1899,15 +1893,15 @@ class ConfluenceSync:
                             error_message=str(e)
                         )
                         results.append(result)
-                
+
                 # Update remaining futures
                 remaining_futures = not_done
-                
+
                 # Print progress periodically
                 current_time = time.time()
                 if done or (current_time - last_progress_time) > 60:
                     completed = len(prepared_contents) - len(remaining_futures)
                     print(f"  Progress: {completed}/{len(prepared_contents)} files completed ({elapsed:.0f}s elapsed)")
                     last_progress_time = current_time
-        
+
         return results

@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-
-import pytest
 
 from confluence_sync.git_utils import (
     _normalise_remote_url,
@@ -13,7 +10,6 @@ from confluence_sync.git_utils import (
     get_repo_root,
     resolve_git_root_for_file,
 )
-
 
 # ---------------------------------------------------------------------------
 # _normalise_remote_url

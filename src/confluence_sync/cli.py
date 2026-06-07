@@ -7,9 +7,8 @@ See ADR 0025 (env loading), ADR 0016 (project-local paths).
 
 from __future__ import annotations
 
-import sys
 import argparse
-from pathlib import Path
+import sys
 from typing import Optional
 
 

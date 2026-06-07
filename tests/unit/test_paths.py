@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,13 +12,11 @@ from confluence_sync.paths import (
     SyncContext,
     destination_state_dir,
     load_dotenv,
-    mermaid_cache_dir,
     resolve_config_path,
     resolve_project_root,
     resolve_state_dir,
     user_local_dir,
 )
-
 
 # ---------------------------------------------------------------------------
 # resolve_project_root

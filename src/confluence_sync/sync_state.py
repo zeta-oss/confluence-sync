@@ -7,12 +7,11 @@ See ADR 0005 (JSONL sync state), ADR 0016 (project-local paths).
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional, Tuple
-
+from typing import Any, Dict, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Directory helpers  (state_dir comes from paths.resolve_state_dir)
@@ -312,7 +311,7 @@ def compute_content_signature(markdown_content: str) -> str:
     Used for rename detection.
     """
     lines = markdown_content.split("\n")
-    headings = [l.strip() for l in lines if l.strip().startswith("#")]
+    headings = [line.strip() for line in lines if line.strip().startswith("#")]
     base = "\n".join(headings[:5]) + "\n" + markdown_content[:500]
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
 

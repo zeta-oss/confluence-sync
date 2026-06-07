@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
-from typing import Optional
 
 
 def run_sync(args: argparse.Namespace) -> int:
     """Entry point for `confluence-sync sync`."""
-    from confluence_sync.paths import SyncContext, ProjectRootError
-    from confluence_sync.config import load_destination_config, get_destination, list_destination_ids, ConfigError
+    from confluence_sync.config import get_destination, list_destination_ids, load_destination_config
+    from confluence_sync.paths import ProjectRootError, SyncContext
     from confluence_sync.sync import sync_destination
 
     if not args.destination and not args.all:

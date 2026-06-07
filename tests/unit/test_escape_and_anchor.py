@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from confluence_sync.content_preparer import ContentPreparer, escape_xml, escape_title_for_confluence
-
+from confluence_sync.content_preparer import ContentPreparer, escape_title_for_confluence, escape_xml
 
 # ---------------------------------------------------------------------------
 # escape_xml

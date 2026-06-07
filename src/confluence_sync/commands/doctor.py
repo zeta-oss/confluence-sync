@@ -7,14 +7,13 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 from typing import Optional
 
 
 def run_doctor(args: argparse.Namespace) -> int:
     """Entry point for `confluence-sync doctor`."""
-    from confluence_sync.paths import SyncContext, ProjectRootError, user_local_dir
-    from confluence_sync.config import load_destination_config, get_destination, ConfigError
+    from confluence_sync.config import ConfigError, get_destination, load_destination_config
+    from confluence_sync.paths import ProjectRootError, SyncContext, user_local_dir
 
     issues: list[str] = []
     ok: list[str] = []

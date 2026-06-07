@@ -5,9 +5,7 @@ Unit tests for attachment_handler.py — ported from test_attachment_handler.py.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
-
-import pytest
+from unittest.mock import Mock
 
 from confluence_sync.attachment_handler import AttachmentHandler
 

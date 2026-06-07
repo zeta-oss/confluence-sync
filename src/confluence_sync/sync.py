@@ -16,43 +16,33 @@ from __future__ import annotations
 import json
 import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional
 
+from confluence_sync.attachment_handler import AttachmentHandler
 from confluence_sync.config import ConfigError, resolve_credentials
-from confluence_sync.paths import resolve_state_dir, mermaid_cache_dir, destination_state_dir  # noqa: F401
-from confluence_sync.sync_state import (
-    load_sync_state,
-    get_page_history,
-    update_page_history,
-    update_destination_metadata,
-    compute_content_hash,
-    find_by_signature,
-    get_metadata_file_path,
-    compact_sync_state,
-)
-from confluence_sync.git_utils import (
-    get_current_commit_hash,
-    get_file_commit_hash,
-    get_file_commit_date,
-    get_file_github_url,
-    get_github_repo_url,
-)
-from confluence_sync.report_generator import SyncResult, generate_sync_report, save_report_to_file
-from confluence_sync.content_preparer import ContentPreparer, PreparedContent, _numeric_prefix_and_rest
 from confluence_sync.confluence_sync import (
     ConfluenceSync,
-    ParentPageNotFoundError,
-    DuplicateTitleError,
-    PageNotFoundError,
-    TitleConflictError,
-    HierarchyValidationError,
+)
+from confluence_sync.content_preparer import ContentPreparer, PreparedContent
+from confluence_sync.git_utils import (
+    get_current_commit_hash,
+    get_github_repo_url,
 )
 from confluence_sync.orphan_handler import OrphanHandler
-from confluence_sync.attachment_handler import AttachmentHandler
-from confluence_sync.ignore_handler import IgnoreHandler
+from confluence_sync.paths import destination_state_dir, mermaid_cache_dir, resolve_state_dir  # noqa: F401
+from confluence_sync.report_generator import SyncResult, generate_sync_report, save_report_to_file
+from confluence_sync.sync_state import (
+    compact_sync_state,
+    compute_content_hash,
+    find_by_signature,
+    get_page_history,
+    load_sync_state,
+    update_destination_metadata,
+    update_page_history,
+)
 
 
 @dataclass
@@ -296,7 +286,7 @@ def sync_destination(
 
         if root_page_id:
             try:
-                response = confluence_sync_client._make_request("GET", f"/pages/{root_page_id}")
+                confluence_sync_client._make_request("GET", f"/pages/{root_page_id}")
                 root_parent_id = root_page_id
                 print(f"Found root page: {root_page_title} (ID: {root_parent_id})")
             except Exception:
@@ -660,7 +650,6 @@ def sync_destination(
         compact_sync_state(destination_id, dest_state_dir.parent)
 
         # Generate report
-        from datetime import datetime
         sync_state_final = load_sync_state(destination_id, dest_state_dir.parent)
         report_text = generate_sync_report(
             destination_id=destination_id,

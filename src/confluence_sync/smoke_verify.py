@@ -9,9 +9,6 @@ See ADR 0023 (live smoke before release), ADR 0028 (smoke subcommand).
 
 from __future__ import annotations
 
-import json
-import re
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 

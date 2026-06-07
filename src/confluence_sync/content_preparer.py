@@ -13,30 +13,27 @@ Clear boundaries:
 - Fully testable without network access
 """
 
-import base64
 import hashlib
 import re
 import struct
 import subprocess
 import tempfile
-import uuid
 import zlib
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from pathlib import Path
 from shutil import which
-from typing import Dict, Optional, List, Tuple, Any
-from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     import markdown
-    from markdown.extensions import codehilite, tables, fenced_code
 except ImportError:
     raise ImportError("'markdown' library not found. Install with: pip install markdown")
 
+from html import escape as html_escape
+
+from confluence_sync.git_utils import get_file_commit_date, get_file_commit_hash, get_file_github_url
 from confluence_sync.ignore_handler import IgnoreHandler
-from confluence_sync.git_utils import get_file_commit_hash, get_file_commit_date, get_file_github_url
 from confluence_sync.sync_state import compute_content_hash, compute_content_signature
-from html import escape as html_escape, unescape as html_unescape
 from confluence_sync.title_mapping import get_title_mapping_loader
 
 # Optional: Python mmdc package for Mermaid → PNG (pip install mmdc)
@@ -116,7 +113,7 @@ class PreparedContent:
 class ContentPreparer:
     """
     Prepares Markdown content for Confluence sync.
-    
+
     This class handles all local file processing and content conversion:
     - Scans directory structure and finds Markdown files
     - Converts Markdown to Confluence Storage Format
@@ -124,11 +121,11 @@ class ContentPreparer:
     - Builds link resolution cache for cross-references
     - Applies title mappings from .confluence-mapping.yaml files
     - Extracts Git metadata (commit hash, GitHub URLs)
-    
+
     It does NOT make any API calls to Confluence.
     All API interactions are handled by ConfluenceSync class.
     """
-    
+
     def __init__(
         self,
         repo_root: Path,
@@ -164,7 +161,7 @@ class ContentPreparer:
         self.attachment_handler = attachment_handler
         self.confluence_base_url = (confluence_base_url or "").rstrip("/")
         self.mermaid_cache_dir = Path(mermaid_cache_dir).resolve() if mermaid_cache_dir else None
-    
+
     def markdown_to_storage_format(
         self,
         markdown_content: str,
@@ -174,13 +171,13 @@ class ContentPreparer:
     ) -> str:
         """
         Convert Markdown to Confluence Storage Format.
-        
+
         Args:
             markdown_content: Markdown content to convert
             current_file_path: Path to current file (for link conversion)
             root_path: Root path (for link conversion)
             commit_hash: Optional commit hash for Git metadata
-            
+
         Returns:
             Tuple of (storage_format, mermaid_attachments). When PNG is rendered,
             bodies reference attachments (``mermaid-N.png``); bytes are listed in
@@ -189,7 +186,7 @@ class ContentPreparer:
         # Extract Mermaid blocks before conversion (codehilite strips language and wraps in spans,
         # so post-processing would not see language-mermaid on <code>)
         markdown_content, mermaid_blocks = self._extract_mermaid_blocks(markdown_content)
-        
+
         # Convert Markdown to HTML first
         md = markdown.Markdown(
             extensions=[
@@ -201,28 +198,28 @@ class ContentPreparer:
             ]
         )
         html = md.convert(markdown_content)
-        
+
         # Replace Mermaid placeholders (image macro + attachments when PNG available)
         html, mermaid_attachments = self._replace_mermaid_placeholders(
             html, mermaid_blocks, source_file=current_file_path
         )
-        
+
         # Add anchor macros to headings for deep linking
         html = self._add_anchors_to_headings(html)
-        
+
         # Convert HTML links to Confluence page links
         if current_file_path and root_path:
             html = self.convert_html_links_to_confluence(html, current_file_path, root_path)
-        
+
         # Add Git metadata if enabled
         if self.add_git_metadata:
             html = self._add_git_metadata(html, current_file_path, commit_hash)
-        
+
         # Convert HTML to Confluence Storage Format
         storage_format = self._html_to_storage_format(html)
-        
+
         return storage_format, mermaid_attachments
-    
+
     def _add_anchors_to_headings(self, html: str) -> str:
         """
         Add heading IDs for deep linking. Uses HTML id on the heading element
@@ -241,9 +238,9 @@ class ContentPreparer:
             if not slug:
                 slug = 'heading'
             return f'<{tag} id="{escape_xml(slug)}">{content}</{tag}>'
-        
+
         return re.sub(r'<(h[1-6])>([^<]+)</\1>', add_anchor, html)
-    
+
     def _extract_mermaid_blocks(self, markdown_content: str) -> tuple:
         """
         Extract ```mermaid ... ``` blocks from markdown and replace with placeholders.
@@ -253,18 +250,18 @@ class ContentPreparer:
         """
         mermaid_blocks: List[str] = []
         placeholder = '<!-- MERMAID_PLACEHOLDER_{} -->'
-        
+
         def replace(match):
             body = match.group(1).strip()
             idx = len(mermaid_blocks)
             mermaid_blocks.append(body)
             return '\n\n' + placeholder.format(idx) + '\n\n'
-        
+
         # Match ```mermaid (optional space/newline) then content until ```
         pattern = re.compile(r'(?ms)^```mermaid\s*\n(.*?)```\s*$')
         modified = pattern.sub(replace, markdown_content)
         return modified, mermaid_blocks
-    
+
     _PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
 
     @staticmethod
@@ -513,7 +510,7 @@ class ContentPreparer:
             except OSError:
                 pass
         return png_bytes
-    
+
     def _mermaid_source_display_path(self, source_file: Optional[Path]) -> str:
         if not source_file:
             return '(unknown file)'
@@ -562,19 +559,19 @@ class ContentPreparer:
                     )
             html = html.replace(placeholder, macro_html)
         return html, mermaid_attachments
-    
+
     def convert_html_links_to_confluence(self, html: str, current_file_path: Path, root_path: Path) -> str:
         """
         Convert HTML links to .md files to Confluence page links.
-        
+
         For existing pages (found in file_to_page_id), uses page ID-based linking.
         For new pages (not yet synced), falls back to title-based linking.
-        
+
         Args:
             html: HTML content
             current_file_path: Path to the current file
             root_path: Root path of the sync operation
-            
+
         Returns:
             HTML with links converted to Confluence format
         """
@@ -582,7 +579,7 @@ class ContentPreparer:
         link_pattern_md = r'<a\s+[^>]*href=["\']([^"\']+\.md[^"\']*)["\'][^>]*>([^<]+)</a>'
         # Match relative directory links (e.g. ../the-hub-way/) — resolve to README.md for lookup
         link_pattern_dir = r'<a\s+[^>]*href=["\'](\.\.?/[^"\']*/)["\'][^>]*>([^<]+)</a>'
-        
+
         def replace_link(match):
             link_path = match.group(1)
             link_text = match.group(2).strip()
@@ -619,24 +616,24 @@ class ContentPreparer:
                     possible_paths.append(f"{dir_path}/README.md")
                 page_id = None
                 page_title = None
-                
+
                 # Try to find page ID first (most reliable)
                 for path_variant in possible_paths:
                     if path_variant in self.file_to_page_id:
                         page_id = self.file_to_page_id[path_variant]
                         break
-                
+
                 # If no page ID, try to find page title
                 if not page_id:
                     for path_variant in possible_paths:
                         if path_variant in self.file_to_title:
                             page_title = self.file_to_title[path_variant]
                             break
-                
+
                 # Note: Confluence Cloud does NOT support ri:page-id or ri:content-id
                 # in storage format - it strips these attributes. Must use ri:content-title.
                 # We still look up page_id first to verify the page exists, but use title for linking.
-                
+
                 # Get title - prefer from cache, or use page_id lookup result if available
                 resolved_title = page_title
                 if page_id and not resolved_title:
@@ -651,7 +648,7 @@ class ContentPreparer:
                         if title == resolved_title and path_key in self.file_to_page_id:
                             page_id = self.file_to_page_id[path_key]
                             break
-                
+
                 if resolved_title or page_id:
                     # Fabric-safe: when confluence_base_url is set, never use ac:link (Fabric does not support it)
                     if self.confluence_base_url:
@@ -673,12 +670,12 @@ class ContentPreparer:
                     return f'<a href="{link_path}">{link_text}</a>'
             except Exception:
                 return match.group(0)
-        
+
         # Apply .md links first, then directory links (e.g. ../the-hub-way/)
         html = re.sub(link_pattern_md, replace_link, html)
         html = re.sub(link_pattern_dir, replace_link, html)
         return html
-    
+
     def _html_to_storage_format(self, html: str) -> str:
         """Convert HTML to Confluence Storage Format."""
         # Remove DOCTYPE, html, head, body tags if present
@@ -688,25 +685,25 @@ class ContentPreparer:
         html = re.sub(r'<head[^>]*>.*?</head>', '', html, flags=re.IGNORECASE | re.DOTALL)
         html = re.sub(r'<body[^>]*>', '', html, flags=re.IGNORECASE)
         html = re.sub(r'</body>', '', html, flags=re.IGNORECASE)
-        
+
         result = html.strip()
-        
+
         # Ensure we have at least some content (Confluence requires non-empty body)
         if not result or len(result) < 10:
             result = '<p></p>'  # Minimal valid Confluence storage format
-        
+
         return result
-    
+
     def _add_git_metadata(self, content: str, file_path: Optional[Path] = None, commit_hash: Optional[str] = None) -> str:
         """Add Git metadata to content using Confluence info macro."""
         if not self.add_git_metadata:
             return content
-        
+
         metadata_parts = []
-        
+
         if commit_hash:
             metadata_parts.append(f"Commit: {commit_hash}")
-        
+
         if file_path and self.github_repo_url and self.repo_root:
             github_url = get_file_github_url(
                 file_path,
@@ -716,14 +713,14 @@ class ContentPreparer:
             )
             if github_url:
                 metadata_parts.append(f'<a href="{github_url}">View on GitHub</a>')
-        
+
         if metadata_parts:
             # Plain HTML; avoid ac:structured-macro "info" which Fabric does not support
             metadata_html = '<p><strong>Source:</strong> ' + ' | '.join(metadata_parts) + '</p>'
             content = content + '\n\n' + metadata_html
-        
+
         return content
-    
+
     def prepare_directory_content(
         self,
         directory: Path,
@@ -742,7 +739,7 @@ class ContentPreparer:
         """
         Phase 1: Prepare all content locally (no API calls).
         Recursively processes directory and prepares all content for syncing.
-        
+
         Args:
             directory: Directory to process
             parent_id: Parent page ID (for hierarchy)
@@ -756,7 +753,7 @@ class ContentPreparer:
             parent_id_map: Map of directory paths to parent IDs
             progress_callback: Optional callback for progress updates
             directory_pages: List to accumulate directory page info
-            
+
         Returns:
             Tuple of (prepared_contents list, parent_id_map dict, directory_pages list)
         """
@@ -770,15 +767,15 @@ class ContentPreparer:
             files_processed_count = [0]
         if root_path is None:
             root_path = directory
-        
+
         # Initialize ignore handler if not already done
         if self.ignore_handler is None:
             self.ignore_handler = IgnoreHandler(root_path)
-        
+
         # Check if this directory should have a page (not root, has content, not ignored)
         is_root = (directory == root_path)
         dir_rel_path = str(directory.relative_to(root_path)) if not is_root else directory.name
-        
+
         # Prepare folder entry if needed (not root, and has subdirectories or files)
         if not is_root:
             # Check if directory has content (subdirs or files)
@@ -792,7 +789,7 @@ class ContentPreparer:
                     if not (self.ignore_handler and self.ignore_handler.should_ignore(item)):
                         has_content = True
                         break
-            
+
             if has_content:
                 # Generate default folder title from directory name
                 # DESIGN NOTE (ADR 0012): Do NOT auto-generate unique titles.
@@ -803,7 +800,7 @@ class ContentPreparer:
                 default_folder_title = re.sub(r'^\d+[-_\s]*', '', default_folder_title).strip()
                 if not default_folder_title:
                     default_folder_title = directory.name
-                
+
                 # Check for README in this directory (for title, but README stays as separate page)
                 readme_path = directory / 'README.md'
                 if readme_path.exists() and not (self.ignore_handler and self.ignore_handler.should_ignore(readme_path)):
@@ -818,9 +815,9 @@ class ContentPreparer:
                                 if readme_title:
                                     default_folder_title = readme_title  # Use README title for folder
                                 break
-                    except:
+                    except Exception:
                         pass
-                
+
                 # Apply title mapping from .confluence-mapping.yaml if present
                 # The mapping file in the PARENT directory controls this folder's title
                 parent_dir = directory.parent
@@ -830,7 +827,7 @@ class ContentPreparer:
                     folder_name=directory.name,
                     default_title=default_folder_title
                 )
-                
+
                 # Get previous history for folder
                 folder_prev_history = None
                 if sync_state and destination_id:
@@ -839,7 +836,7 @@ class ContentPreparer:
                     folders = sync_state.get('folders', {})
                     if folder_key in folders:
                         folder_prev_history = folders[folder_key]
-                
+
                 # Add to folder pages list (folders, not directory pages)
                 directory_pages.append({
                     'dir_path': directory,
@@ -851,21 +848,21 @@ class ContentPreparer:
                     'prev_history': folder_prev_history,
                     'readme_path': readme_path if readme_path.exists() else None  # Track README for title
                 })
-        
+
         # Process Markdown files in this directory (natural sort: 00, 01, 02, ..., 10 so order is retained)
         md_file_list = [p for p in directory.glob('*.md') if not p.name.startswith('.')]
         md_files = sorted(md_file_list, key=_natural_sort_key_for_md)
         # Detect if this folder uses numeric prefixes (so we retain order via prefix-in-title)
         has_numbered_files = any(_numeric_prefix_and_rest(p.stem) for p in md_files)
-        
+
         for md_file in md_files:
             if self.ignore_handler and self.ignore_handler.should_ignore(md_file):
                 continue
-            
+
             try:
                 with open(md_file, 'r', encoding='utf-8') as f:
                     content = f.read()
-                
+
                 # Extract title from first heading
                 title = None
                 for line in content.split('\n'):
@@ -876,13 +873,13 @@ class ContentPreparer:
                     elif line.startswith('#'):
                         title = line[1:].strip()
                         break
-                
+
                 # Generate default title from file content or filename
                 # DESIGN NOTE (ADR 0012): Do NOT auto-generate unique titles.
                 # If a title conflict occurs, use .confluence-mapping.yaml to specify a unique title.
                 if not title:
                     title = md_file.stem.replace('_', ' ').replace('-', ' ').title()
-                
+
                 legacy_title = None
                 # When folder has numeric-prefixed files, include prefix in page title to retain order in Confluence
                 if has_numbered_files:
@@ -897,7 +894,7 @@ class ContentPreparer:
                             suffix = title  # from # heading
                         title = f"{prefix_str} - {suffix}"
                         legacy_title = suffix  # for cleanup of old-format pages
-                
+
                 # Apply title mapping from .confluence-mapping.yaml if present
                 # The mapping file in the same directory controls this page's title
                 title_mapper = get_title_mapping_loader()
@@ -906,19 +903,19 @@ class ContentPreparer:
                     filename=md_file.name,
                     default_title=title
                 )
-                
+
                 rel_path = str(md_file.relative_to(root_path))
                 file_key = f"{source_folder}/{rel_path}" if source_folder else rel_path
-                
+
                 # Get file-specific commit hash and date
                 file_commit_hash = None
                 file_commit_date = None
                 if self.add_git_metadata:
                     file_commit_hash = get_file_commit_hash(md_file, self.repo_root)
                     file_commit_date = get_file_commit_date(md_file, self.repo_root)
-                
+
                 commit_hash_to_use = file_commit_hash or commit_hash
-                
+
                 # Get previous history from cached sync_state
                 prev_history = None
                 if sync_state and destination_id:
@@ -928,7 +925,7 @@ class ContentPreparer:
                             prev_history = sync_state['sync_history'][prefixed_path]
                     if not prev_history and rel_path in sync_state.get('sync_history', {}):
                         prev_history = sync_state['sync_history'][rel_path]
-                
+
                 # Check force sync
                 force_sync = False
                 if sync_state and destination_id:
@@ -937,35 +934,35 @@ class ContentPreparer:
                         if file_key.startswith(force_path) or rel_path.startswith(force_path):
                             force_sync = True
                             break
-                
+
                 # Convert to storage format
                 storage_format, mermaid_attachments = self.markdown_to_storage_format(content, md_file, root_path, commit_hash_to_use)
                 content_hash = compute_content_hash(storage_format)
                 # Compute content signature for rename detection
                 content_sig = compute_content_signature(content)
-                
+
                 # Get directory relative path for this file
                 file_dir_rel_path = str(directory.relative_to(root_path)) if directory != root_path else directory.name
-                
+
                 # Get parent ID (will be resolved during sync phase when folders are created)
                 # For now, use the directory's relative path - parent ID will be resolved in Phase 2a
                 dir_parent_id = parent_id_map.get(file_dir_rel_path, parent_id)
-                
+
                 # Get GitHub URL
                 github_url = None
                 if self.add_git_metadata:
                     github_url = get_file_github_url(md_file, self.repo_root, self.github_repo_url, commit_hash_to_use)
-                
+
                 # Get existing page ID from state (if available)
                 existing_page_id = None
                 if prev_history and prev_history.get('page_id'):
                     existing_page_id = prev_history['page_id']
-                
+
                 # Find images in this file for later upload
                 image_paths = []
                 if self.attachment_handler:
                     image_paths = self.attachment_handler.find_images_in_markdown(content, md_file)
-                
+
                 prepared = PreparedContent(
                     file_path=str(md_file),
                     rel_path=rel_path,
@@ -991,16 +988,16 @@ class ContentPreparer:
                 # Store directory relative path for later parent ID update
                 prepared._dir_rel_path = file_dir_rel_path  # Store for parent ID update
                 prepared_contents.append(prepared)
-                
+
                 files_processed_count[0] += 1
                 if progress_callback:
                     file_display = rel_path if len(rel_path) <= 60 else "..." + rel_path[-57:]
                     progress_callback(files_processed_count[0], file_display)
-                
+
             except Exception as e:
                 print(f"  ✗ Error preparing {md_file}: {e}")
                 continue
-        
+
         # Recursively process subdirectories
         for subdir in sorted(directory.iterdir()):
             if subdir.is_dir() and not subdir.name.startswith('.'):
@@ -1008,7 +1005,7 @@ class ContentPreparer:
                     continue
                 # Get parent ID for subdirectory (will be set when folder is created)
                 subdir_parent_id = parent_id_map.get(dir_rel_path, parent_id) if not is_root else parent_id
-                
+
                 # Recursively prepare subdirectory
                 self.prepare_directory_content(
                     subdir,
@@ -1024,5 +1021,5 @@ class ContentPreparer:
                     progress_callback=progress_callback,
                     directory_pages=directory_pages
                 )
-        
+
         return prepared_contents, parent_id_map, directory_pages
