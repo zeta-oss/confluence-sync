@@ -1,4 +1,4 @@
-.PHONY: install test lint smoke build release clean
+.PHONY: install test lint smoke build release-preflight release clean
 
 install:
 	./scripts/bootstrap-dev.sh
@@ -20,6 +20,9 @@ smoke:
 
 build:
 	@bash -c 'source scripts/lib.sh && REPO_ROOT="$$(pwd)" && run_build'
+
+release-preflight:
+	@bash -c 'source scripts/lib.sh && REPO_ROOT="$$(pwd)" && run_release_preflight'
 
 release:
 	@test -n "$(VERSION)" || (echo "Usage: make release VERSION=x.y.z"; exit 1)

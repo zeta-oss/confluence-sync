@@ -52,6 +52,35 @@ load_confluence_env() {
   fi
 }
 
+_confluence_sync_smoke_config() {
+  local repo_root="${1:-$(_confluence_sync_repo_root)}"
+  echo "${repo_root}/tests/live_smoke/confluence-sync.yml"
+}
+
+_confluence_sync_cli() {
+  local repo_root="${REPO_ROOT:-$(_confluence_sync_repo_root)}"
+  echo "${repo_root}/.venv/bin/confluence-sync"
+}
+
+run_smoke_reset() {
+  local repo_root="${REPO_ROOT:-$(_confluence_sync_repo_root)}"
+  ensure_venv "${repo_root}"
+  load_confluence_env
+  "$(_confluence_sync_cli)" smoke reset -d smoke-live \
+    --config "$(_confluence_sync_smoke_config "${repo_root}")" || true
+}
+
+_mark_smoke_pass() {
+  local stamp
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "${HOME}/.local/confluence-sync"
+  echo "${stamp}" > "${HOME}/.local/confluence-sync/smoke-last-pass"
+}
+
+run_release_preflight() {
+  "${REPO_ROOT:-$(_confluence_sync_repo_root)}/scripts/release-preflight.sh"
+}
+
 run_live_smoke() {
   local repo_root="${REPO_ROOT:-$(_confluence_sync_repo_root)}"
   ensure_venv "${repo_root}"
@@ -60,7 +89,12 @@ run_live_smoke() {
     echo "ERROR: CONFLUENCE_TOKEN not set. Add to ~/.local/confluence-sync/.env"
     return 1
   fi
-  "${repo_root}/.venv/bin/confluence-sync" smoke run -d smoke-live
+  if "$(_confluence_sync_cli)" smoke run -d smoke-live \
+      --config "$(_confluence_sync_smoke_config "${repo_root}")"; then
+    _mark_smoke_pass
+    return 0
+  fi
+  return 1
 }
 
 run_brew_test() {

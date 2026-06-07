@@ -3,9 +3,9 @@ destinations:
     name: Confluence Sync Smoke Tests
     confluence:
       url: https://zeta-tm.atlassian.net
-      space_key: CSYNC
+      space_key: ephemeral
       root_page_title: Confluence Sync Smoke
-      root_page_id: null  # set to a stable page ID once provisioned
+      root_page_id: null
     source:
       folders:
         - path: docs
@@ -14,6 +14,7 @@ destinations:
       username: ramki@zeta.tech
       token_env_var: CONFLUENCE_TOKEN
     options:
-      add_git_metadata: true
+      auto_provision_space: true
+      add_git_metadata: false
       dry_run: false
-      parallel_threads: 3
+      parallel_threads: 1

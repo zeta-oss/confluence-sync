@@ -1,27 +1,47 @@
 # Live Smoke Tests
 
-This directory contains the live smoke test fixture and configuration for the
-`confluence-sync smoke` subcommand.
+Live smoke tests provision an **ephemeral Confluence workspace** automatically —
+no manual CSYNC space setup required.
 
-## One-time Confluence setup
+## How it works
 
-1. In `zeta-tm.atlassian.net`, create a space with key `CSYNC` (or use an existing sandbox).
-2. Create a page titled `Confluence Sync Smoke` in that space.
-3. Copy the page ID from the URL (`?pageId=XXXXX`) and set it in
-   `tests/live_smoke/confluence-sync.yml` as `root_page_id`.
-4. Ensure `CONFLUENCE_TOKEN` is set in `~/.local/confluence-sync/.env`.
+Each `confluence-sync smoke run`:
+
+1. **Creates** a private Confluence space (`CS{run_id}`) via REST API
+2. Copies `fixture/` to a temp git repo and runs clean + incremental sync
+3. Verifies page count, mermaid PNG, and image attachments
+4. **Deletes the entire space** on teardown (even on failure)
+
+A session file at `~/.local/confluence-sync/smoke-session.json` records the
+active workspace so `smoke reset` and the release `trap EXIT` can destroy it
+if the process is interrupted.
+
+If space creation is not permitted, smoke falls back to your personal space
+(`CONFLUENCE_SPACE` or `CONFLUENCE_SMOKE_FALLBACK_SPACE` in
+`~/.local/confluence-sync/.env`) with a **run-unique root page and page titles**
+to avoid ghost-page conflicts from Confluence's slow deletes.
+
+## Prerequisites
+
+```bash
+# Token (required)
+echo 'CONFLUENCE_TOKEN=...' >> ~/.local/confluence-sync/.env
+
+# Fallback space if ephemeral space creation is denied (usually your personal space)
+echo 'CONFLUENCE_SPACE=~5570580...' >> ~/.local/confluence-sync/.env
+```
+
+Also requires `mmdc` or `npx @mermaid-js/mermaid-cli`.
 
 ## Running
 
 ```bash
-make smoke    # nox -s live_smoke
+make smoke
 # or:
-confluence-sync smoke run -d smoke-live --project-root tests/live_smoke
+confluence-sync smoke run -d smoke-live --config tests/live_smoke/confluence-sync.yml
 ```
 
 ## Fixture contents
-
-The `fixture/` directory is a miniature docs repo:
 
 | File | Purpose |
 |------|---------|
@@ -33,10 +53,7 @@ The `fixture/` directory is a miniature docs repo:
 | `docs/images.md` | Local PNG/JPEG → Confluence attachments |
 | `docs/anchors-source.md` | Cross-page anchor link source |
 | `docs/anchors-target.md` | Heading anchor target |
-| `assets/` | Test images committed to repo |
-| `.confluence-mapping.yaml` | Unique titles to avoid space collisions |
+| `.confluence-mapping.yaml` | Page titles (prefixed with run ID at runtime) |
 
-## Cleanup
-
-Smoke run always resets the Confluence subtree before and after the run.
-Committed `fixture/` files are **never modified** — the smoke run copies to a tmp dir first.
+Committed `fixture/` files are **never modified** — the smoke run copies to a
+tmp dir first and patches titles there.

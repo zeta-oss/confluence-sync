@@ -73,6 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
         sp = smoke_sub.add_parser(action, help=f"smoke {action}")
         sp.add_argument("-d", "--destination", metavar="ID", required=True)
         sp.add_argument("--project-root", metavar="PATH")
+        sp.add_argument("--config", metavar="PATH", help="Config file override")
         sp.add_argument("--state-dir", metavar="PATH")
         sp.set_defaults(func=_cmd_smoke)
 

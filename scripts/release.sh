@@ -4,15 +4,16 @@
 #
 # Steps (abort on first failure):
 # 1. Verify clean git status on main
-# 2. Bump version in pyproject.toml + __init__.py; update CHANGELOG.md
-# 3. make test (coverage gate)
-# 4. Require mmdc on PATH (doctor check)
-# 5. Trap EXIT → smoke reset
-# 6. confluence-sync smoke run (live)
-# 7. hatch build (sdist tarball)
-# 8. ./scripts/publish-brew.sh
-# 9. brew test --formula
-# 10. Commit + tag + push
+# 2. release-preflight (token, mmdc, brew, recent make smoke)
+# 3. Bump version in pyproject.toml + __init__.py; update CHANGELOG.md
+# 4. make test (coverage gate)
+# 5. Require mmdc on PATH (doctor check)
+# 6. Trap EXIT → smoke reset
+# 7. confluence-sync smoke run (live)
+# 8. hatch build (sdist tarball)
+# 9. ./scripts/publish-brew.sh
+# 10. brew test --formula
+# 11. Commit + tag + push
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,8 +40,12 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
-# --- Step 2: bump version ---
-echo "[1/10] Bumping version to ${VERSION}..."
+# --- Step 2: preflight ---
+echo "[2/11] Running release preflight..."
+run_release_preflight
+
+# --- Step 3: bump version ---
+echo "[3/11] Bumping version to ${VERSION}..."
 python3 - <<EOF
 import re, pathlib
 
@@ -62,13 +67,13 @@ if grep -q "\[Unreleased\]" CHANGELOG.md 2>/dev/null; then
   rm -f CHANGELOG.md.bak
 fi
 
-# --- Step 3: tests ---
-echo "[3/10] Running tests..."
+# --- Step 4: tests ---
+echo "[4/11] Running tests..."
 ensure_venv "${REPO_ROOT}"
 run_tests
 
-# --- Step 4: mermaid check ---
-echo "[4/10] Checking mermaid-cli..."
+# --- Step 5: mermaid check ---
+echo "[5/11] Checking mermaid-cli..."
 if ! command -v mmdc &>/dev/null; then
   if ! npx --yes @mermaid-js/mermaid-cli --version &>/dev/null 2>&1; then
     echo "ERROR: mmdc not found. Install: npm install -g @mermaid-js/mermaid-cli"
@@ -76,28 +81,28 @@ if ! command -v mmdc &>/dev/null; then
   fi
 fi
 
-# --- Step 5: trap for smoke reset ---
-echo "[5/10] Registering smoke reset trap..."
-trap 'confluence-sync smoke reset -d smoke-live || true' EXIT
+# --- Step 6: trap for smoke reset ---
+echo "[6/11] Registering smoke reset trap..."
+trap 'run_smoke_reset' EXIT
 
-# --- Step 6: live smoke ---
-echo "[6/10] Running live smoke..."
+# --- Step 7: live smoke ---
+echo "[7/11] Running live smoke..."
 run_live_smoke
 
-# --- Step 7: build ---
-echo "[7/10] Building dist..."
+# --- Step 8: build ---
+echo "[8/11] Building dist..."
 run_build
 
-# --- Step 8: update formula ---
-echo "[8/10] Updating Homebrew formula..."
+# --- Step 9: update formula ---
+echo "[9/11] Updating Homebrew formula..."
 ./scripts/publish-brew.sh "${VERSION}"
 
-# --- Step 9: brew test ---
-echo "[9/10] Testing formula..."
+# --- Step 10: brew test ---
+echo "[10/11] Testing formula..."
 run_brew_test
 
-# --- Step 10: commit + tag + push ---
-echo "[10/10] Committing and tagging..."
+# --- Step 11: commit + tag + push ---
+echo "[11/11] Committing and tagging..."
 git add pyproject.toml src/confluence_sync/__init__.py Formula/confluence-sync.rb CHANGELOG.md
 git commit -m "chore(release): v${VERSION}"
 git tag "${TAG}"

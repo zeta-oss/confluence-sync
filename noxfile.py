@@ -59,6 +59,7 @@ def live_smoke(session: nox.Session) -> None:
         "smoke",
         "run",
         "-d", "smoke-live",
+        "--config", "tests/live_smoke/confluence-sync.yml",
         external=True,
     )
 

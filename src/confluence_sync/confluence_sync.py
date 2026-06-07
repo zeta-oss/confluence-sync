@@ -197,6 +197,21 @@ class ConfluenceSync:
             raise Exception(f"Space '{space_key}' not found")
         except Exception as e:
             raise Exception(f"Could not resolve space_id for space_key '{space_key}': {e}")
+
+    @staticmethod
+    def _page_storage_body(page_data: Dict[str, Any]) -> str:
+        """Extract storage-format HTML from a v2 page JSON payload."""
+        body = page_data.get("body") or {}
+        storage = body.get("storage")
+        if isinstance(storage, dict) and storage.get("value"):
+            return storage["value"]
+        return body.get("value", "") or ""
+
+    def _get_page(self, page_id: str, *, include_body: bool = False) -> Dict[str, Any]:
+        """Fetch a page by ID; request storage body when content comparison is needed."""
+        params = {"body-format": "storage"} if include_body else None
+        response = self._make_request("GET", f"/pages/{page_id}", params=params)
+        return response.json()
     
     def _make_request_internal(self, method: str, endpoint: str, **kwargs) -> requests.Response:
         """Internal method to make API request (without retry logic)."""
@@ -1245,10 +1260,9 @@ class ConfluenceSync:
             else:
                 # No previous hash or hash mismatch - do full comparison
                 try:
-                    response = self._make_request('GET', f'/pages/{existing_id}')
-                    current_data = response.json()
+                    current_data = self._get_page(existing_id, include_body=True)
                     version = current_data['version']['number']
-                    current_content = current_data.get('body', {}).get('value', '')
+                    current_content = self._page_storage_body(current_data)
                     current_title = current_data.get('title', '')
                     
                     # Get current parent ID

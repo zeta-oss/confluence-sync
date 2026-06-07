@@ -32,7 +32,6 @@ from confluence_sync.sync_state import (
     find_by_signature,
     get_metadata_file_path,
     compact_sync_state,
-    get_destination_data_dir,
 )
 from confluence_sync.git_utils import (
     get_current_commit_hash,
@@ -189,12 +188,12 @@ def sync_destination(
     # Resolve state dir
     if state_dir is None:
         state_dir = _resolve_state_dir(project_root)
-    dest_data_dir = destination_state_dir(state_dir, destination_id)
+    dest_state_dir = destination_state_dir(state_dir, destination_id)
 
     repo_commit_hash = get_current_commit_hash(project_root) if add_git_metadata else None
     github_repo_url = get_github_repo_url(project_root, github_repo_override) if add_git_metadata else None
 
-    sync_state = load_sync_state(destination_id, dest_data_dir.parent)
+    sync_state = load_sync_state(destination_id, dest_state_dir.parent)
     cache_dir = mermaid_cache_dir()
 
     base_url = confluence_config["url"]
@@ -209,7 +208,7 @@ def sync_destination(
     if dry_run:
         print("DRY RUN MODE - No changes will be made")
     print(f"{'='*80}")
-    print(f"  State dir: {dest_data_dir}")
+    print(f"  State dir: {dest_state_dir}")
     print(f"  Mermaid PNG cache: {cache_dir}")
     print()
 
@@ -286,7 +285,7 @@ def sync_destination(
         progress.start_step("Finding/Creating root page")
 
         if not root_page_id:
-            metadata_file = dest_data_dir / "sync-metadata.json"
+            metadata_file = dest_state_dir / "sync-metadata.json"
             if metadata_file.exists():
                 try:
                     with open(metadata_file, "r") as f:
@@ -312,7 +311,7 @@ def sync_destination(
                 raise Exception("Could not get space homepage ID.")
 
             root_file_key = f"__root__{root_page_title}"
-            root_prev_history = get_page_history(destination_id, dest_data_dir.parent, root_file_key, None)
+            root_prev_history = get_page_history(destination_id, dest_state_dir.parent, root_file_key, None)
             root_content = f"# {root_page_title}\n\n*Root page for synced documentation*"
             root_storage, _ = preparer.markdown_to_storage_format(root_content, None, project_root, None)
             root_hash = compute_content_hash(root_storage)
@@ -333,7 +332,7 @@ def sync_destination(
 
         update_destination_metadata(
             destination_id,
-            data_dir,
+            state_dir,
             confluence_space=space_key,
             root_page_id=root_parent_id,
             commit_hash=repo_commit_hash if add_git_metadata else None,
@@ -452,11 +451,16 @@ def sync_destination(
                         folder_id = prev_history["folder_id"]
                         folder_status = "found"
                     else:
-                        folder_id, folder_status = confluence_sync_client.find_or_create_folder(
+                        folder_id, folder_status = confluence_sync_client.create_folder(
                             title=folder_title,
+                            space_id=confluence_sync_client.space_id,
                             parent_id=parent_id_val or root_parent_id,
-                            sync_state_entry=prev_history,
+                            root_page_id=root_parent_id,
                         )
+                        if folder_status == "title_conflict":
+                            raise Exception(
+                                f"Title conflict: folder '{folder_title}' already exists elsewhere in the space"
+                            )
 
                     with folder_lock:
                         parent_id_map[folder_key] = folder_id
@@ -464,7 +468,7 @@ def sync_destination(
 
                     append_folder_history(
                         destination_id,
-                        data_dir,
+                        state_dir,
                         folder_path=dir_rel_path,
                         source_folder=source_folder,
                         folder_id=folder_id,
@@ -528,9 +532,9 @@ def sync_destination(
                 if not force_update and prev and prev.get("content_hash") == content_hash and prev.get("page_id"):
                     update_page_history(
                         destination_id,
-                        data_dir,
-                        file_path=prepared.rel_path,
-                        source_folder=prepared.source_folder,
+                        state_dir,
+                        file_path=prepared.file_key,
+                        source_folder=None,
                         page_id=prev.get("page_id"),
                         page_title=prev.get("page_title"),
                         commit_hash=prepared.commit_hash,
@@ -539,7 +543,6 @@ def sync_destination(
                         version=prev.get("version"),
                         parent_id=prepared.parent_id,
                         content_signature=prepared.content_signature,
-                        
                     )
                     return SyncResult(
                         file_path=prepared.rel_path,
@@ -561,7 +564,6 @@ def sync_destination(
                     parent_id=prepared.parent_id or root_parent_id,
                     sync_state_entry=prev,
                     root_page_id=root_parent_id,
-                    force_update=force_update,
                 )
 
                 # Upload attachments
@@ -575,9 +577,9 @@ def sync_destination(
 
                 update_page_history(
                     destination_id,
-                    data_dir,
-                    file_path=prepared.rel_path,
-                    source_folder=prepared.source_folder,
+                    state_dir,
+                    file_path=prepared.file_key,
+                    source_folder=None,
                     page_id=page_id,
                     page_title=actual_title,
                     commit_hash=prepared.commit_hash,
@@ -586,7 +588,6 @@ def sync_destination(
                     version=version,
                     parent_id=prepared.parent_id,
                     content_signature=prepared.content_signature,
-                    
                 )
 
                 confluence_url = f"{confluence_sync_client.base_url}/pages/viewpage.action?pageId={page_id}"
@@ -656,11 +657,11 @@ def sync_destination(
                 print("  No orphans found")
 
         # Compact state
-        compact_sync_state(destination_id, dest_data_dir.parent)
+        compact_sync_state(destination_id, dest_state_dir.parent)
 
         # Generate report
         from datetime import datetime
-        sync_state_final = load_sync_state(destination_id, dest_data_dir.parent)
+        sync_state_final = load_sync_state(destination_id, dest_state_dir.parent)
         report_text = generate_sync_report(
             destination_id=destination_id,
             destination_name=destination_name,
@@ -670,7 +671,7 @@ def sync_destination(
             confluence_base_url=confluence_sync_client.base_url,
             space_key=space_key,
         )
-        report_file = save_report_to_file(destination_id, report_text, dest_data_dir.parent)
+        report_file = save_report_to_file(destination_id, report_text, dest_state_dir.parent)
         print(f"\n✓ Report saved: {report_file}")
 
         # Print summary
