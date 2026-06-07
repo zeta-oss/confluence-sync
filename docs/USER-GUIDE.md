@@ -57,6 +57,48 @@ This is the most common point of friction.
     Confluence has no concept of a "naked" folder. Every node in the hierarchy is a **Page**. Folders are actually Page nodes that happen to have child pages nested under them. 
 *   **The Solution**: `confluence-sync` automatically creates a page in Confluence to act as the "Folder". To prevent this folder page from being completely blank, if you place a `README.md` or an `index.md` inside a local directory, the tool will automatically use its content to populate the body of that folder's Confluence page, perfectly blending container hierarchy with rich documentation.
 
+### 2.4 Unified Namespace for Pages and Folders (Folder Title Collisions)
+
+*   **The Concept**:
+    Because Confluence models folders as standard Pages, **folder titles are subject to the same global uniqueness constraint** as regular documents.
+*   **The Challenge**:
+    A very common pitfall is having structure like this:
+    ```text
+    docs/
+    ├── development/
+    │   └── setup/                # Directory "setup" -> Page "Setup"
+    │       └── environment.md
+    └── production/
+        └── setup/                # Directory "setup" -> Page "Setup"
+            └── environment.md
+    ```
+    Even though these "setup" directories reside under completely separate parents (`development/` vs `production/`), **Confluence will block the creation of the second "Setup" folder** because a page with that title already exists in the flat Space namespace.
+*   **The Solution**: Rename your directories to be more descriptive (e.g., `development-setup/` and `production-setup/`), or use a local `.confluence-mapping.yaml` file in the parent directories to map the folder name to a unique, Confluence-friendly title.
+
+### 2.5 Markdown Links: Supported Formats & Constraints
+
+While `confluence-sync` performs extensive HTML parsing and link rewriting, not all Markdown link formats can be parsed or resolved cleanly into Confluence macros.
+
+*   **Supported Formats (Highly Robust)**:
+    - **Relative files**: `[Guide](../guides/usage.md)`
+    - **Relative files with local anchors**: `[Installation](../setup.md#installation-steps)`
+    - **Directory links**: `[Parent](../platform/)` (resolves automatically to that folder's `README.md` / `index.md` if present).
+    - **Standard web links**: `[Google](https://google.com)` (kept as-is).
+*   **Unsupported/Partially Broken Formats**:
+    - **Extension-less relative links**: `[Setup](../setup)` — `confluence-sync` relies on the `.md` extension to identify and map the file in the local title pre-scan cache. Excluding `.md` will cause the sync to treat it as an external relative URL and render a broken link.
+    - **Absolute local filesystem paths**: `[Doc](/Users/username/docs/usage.md)` or `[Doc](C:\docs\usage.md)` — these are ignored to prevent local development path exposure.
+    - **Bypassing Markdown with raw HTML anchors**: `<a href="../usage.md">Usage</a>` — raw HTML elements bypassing standard Markdown syntax cannot be reliably transformed and may lead to broken URLs in the target.
+
+### 2.6 Media, Image & Attachment Limitations
+
+Images and media referenced in Markdown (`![Alt](./assets/image.png)`) are automatically converted, uploaded to Atlassian as page attachments, and rewritten to Confluence `ac:image` storage tags.
+
+*   **Security Repo Boundary**:
+    `confluence-sync` enforces strict repository boundary isolation to prevent security leaks. All referenced asset paths **must reside within the designated `--project-root` boundary**. Any paths trying to walk out of the repository (e.g. `![Leak](../../../private-keys/credentials.png)`) will be blocked and ignored by the sync preparer.
+*   **Multimedia Limitations**:
+    - **Atlassian Upload Size Limits**: Very large assets (typically >10MB, depending on your organization's Confluence attachment size configurations) will be rejected by Atlassian with a `413 Payload Too Large` error, failing that page's sync.
+    - **Video/Audio & Binary Documents**: While standard image formats (`.png`, `.jpeg`, `.jpg`, `.gif`, `.svg`, `.webp`) are embedded cleanly, other rich documents (like `.pdf`, `.mp4`, `.zip` etc.) are uploaded to the page's attachments list, but will not render inline in the body. Users must download them from the Confluence attachments menu or insert them using native Confluence macros.
+
 ## 3. Installation
 
 ### Homebrew (recommended)
@@ -225,7 +267,12 @@ Use `--force-update` to re-sync all pages regardless of content hash (useful aft
 |---------|----------|
 | 401 Unauthorized | Check `CONFLUENCE_TOKEN` in `~/.local/confluence-sync/.env` |
 | "Not inside a Git repository" | `cd` into a repo with `.git/` or use `--project-root` |
-| Title conflict error | Add `.confluence-mapping.yaml` with unique title for conflicting page |
+| Title conflict error | Add `.confluence-mapping.yaml` with unique title for conflicting page (see Section 2.1 & 2.4). |
+| Folder title collision | Folders also act as pages. If two folders have the same name (e.g. `setup`), they will collide globally (see Section 2.4). Map them to unique titles using `.confluence-mapping.yaml`. |
+| Cross-page links are broken | Verify that your relative links include the `.md` extension. `[page](../page)` is unsupported; use `[page](../page.md)` (see Section 2.5). |
+| Anchors are not working | Confluence Cloud strips standard heading `id` attributes from HTML during API retrieval. The sync verify Fallback check matches heading text, but ensure your links strictly use `#heading-text-slug` formatted lowercase (see Section 2.5). |
+| Missing or broken images | Ensure image file paths reside completely *inside* your git repository boundary. Absolute local paths or relative paths walking outside the Git root (e.g., `../../external.png`) are blocked for safety (see Section 2.6). |
+| Large image fails to upload | Atlassian restricts attachment uploads (usually max 10MB). Optimize or compress your images before syncing (see Section 2.6). |
 | Mermaid diagrams blank | Install `@mermaid-js/mermaid-cli`: `npm install -g @mermaid-js/mermaid-cli` |
 | Root page conflict (TDA pattern) | Set `root_page_id` in config to pin to the existing space homepage |
 | Wrong GitHub URL in footer | Set `options.github_repo_override` to the correct HTTPS URL |
