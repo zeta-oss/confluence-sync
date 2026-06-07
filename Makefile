@@ -13,13 +13,13 @@ test:
 	else echo "Run: make install"; exit 1; fi
 
 lint:
-	nox -s lint
+	@bash -c 'source scripts/lib.sh && REPO_ROOT="$$(pwd)" && run_nox -s lint'
 
 smoke:
-	nox -s live_smoke
+	@bash -c 'source scripts/lib.sh && REPO_ROOT="$$(pwd)" && run_live_smoke'
 
 build:
-	nox -s build
+	@bash -c 'source scripts/lib.sh && REPO_ROOT="$$(pwd)" && run_build'
 
 release:
 	@test -n "$(VERSION)" || (echo "Usage: make release VERSION=x.y.z"; exit 1)

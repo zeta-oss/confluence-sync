@@ -43,14 +43,14 @@ def cli(session: nox.Session) -> None:
     session.run("pytest", "tests/cli", "-v")
 
 
-@nox.session(python="3.11")
+@nox.session(python=["3.11", "3.12", "3.13"])
 def lint(session: nox.Session) -> None:
     """Ruff static analysis."""
     session.install("ruff>=0.4")
     session.run("ruff", "check", "src", "tests")
 
 
-@nox.session(python="3.11")
+@nox.session(python=["3.11", "3.12", "3.13"])
 def live_smoke(session: nox.Session) -> None:
     """Full live smoke run — requires CONFLUENCE_TOKEN in ~/.local/confluence-sync/.env."""
     session.install("-e", ".[dev]")
@@ -63,7 +63,7 @@ def live_smoke(session: nox.Session) -> None:
     )
 
 
-@nox.session(python="3.11")
+@nox.session(python=["3.11", "3.12", "3.13"])
 def build(session: nox.Session) -> None:
     """Build wheel and sdist."""
     session.install("hatch")

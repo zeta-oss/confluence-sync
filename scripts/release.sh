@@ -5,17 +5,19 @@
 # Steps (abort on first failure):
 # 1. Verify clean git status on main
 # 2. Bump version in pyproject.toml + __init__.py; update CHANGELOG.md
-# 3. nox -s test cli  (coverage gate)
+# 3. make test (coverage gate)
 # 4. Require mmdc on PATH (doctor check)
 # 5. Trap EXIT → smoke reset
-# 6. nox -s live_smoke
-# 7. nox -s build (sdist tarball)
+# 6. confluence-sync smoke run (live)
+# 7. hatch build (sdist tarball)
 # 8. ./scripts/publish-brew.sh
-# 9. nox -s brew_test
+# 9. brew test --formula
 # 10. Commit + tag + push
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib.sh
+source "${REPO_ROOT}/scripts/lib.sh"
 VERSION="${1:-}"
 
 if [[ -z "${VERSION}" ]]; then
@@ -62,7 +64,8 @@ fi
 
 # --- Step 3: tests ---
 echo "[3/10] Running tests..."
-nox -s test cli
+ensure_venv "${REPO_ROOT}"
+run_tests
 
 # --- Step 4: mermaid check ---
 echo "[4/10] Checking mermaid-cli..."
@@ -79,11 +82,11 @@ trap 'confluence-sync smoke reset -d smoke-live || true' EXIT
 
 # --- Step 6: live smoke ---
 echo "[6/10] Running live smoke..."
-nox -s live_smoke
+run_live_smoke
 
 # --- Step 7: build ---
 echo "[7/10] Building dist..."
-nox -s build
+run_build
 
 # --- Step 8: update formula ---
 echo "[8/10] Updating Homebrew formula..."
@@ -91,7 +94,7 @@ echo "[8/10] Updating Homebrew formula..."
 
 # --- Step 9: brew test ---
 echo "[9/10] Testing formula..."
-nox -s brew_test
+run_brew_test
 
 # --- Step 10: commit + tag + push ---
 echo "[10/10] Committing and tagging..."
