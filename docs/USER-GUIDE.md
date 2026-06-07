@@ -143,6 +143,42 @@ Inline comments are much more complex. When a reader highlights text and leaves 
     3.  **Fuzzy String Alignment**: Run a diff/merge or edit-distance alignment algorithm (such as Levenshtein distance) to locate where that exact highlighted text block resides in the *newly compiled* document body.
     4.  **Tag Re-injection**: Re-wrap the matched text with the original `<ac:inline-comment-marker ac:ref="...">` tags in the compiled payload before issuing the `PUT` request. If the anchored text was completely deleted or heavily modified in Git, the sync engine can gracefully allow Confluence to orphan/resolve the comment or re-inject it at a nearby paragraph fallback.
 
+---
+
+### 2.8 Operational Safeguards & Known Sync Limitations
+
+When running `confluence-sync` in enterprise production environments (such as scheduled CI/CD pipelines, multi-author repositories, or large-scale wiki migrations), several operational limits and architectural boundaries must be considered.
+
+#### 1. Rate Limiting, Concurrency, and Backoff (HTTP 429)
+The Atlassian Confluence Cloud REST API enforces strict, dynamic rate limits (HTTP 429) based on tenant load. 
+*   **The Challenge**: Triggering dozens of parallel page writes can quickly saturate API thresholds, leading to dropped requests and partial synchronization failures.
+*   **The Safeguard**: `confluence-sync` implements automatic retry mechanisms with exponential backoff. It dynamically parses Atlassian's `Retry-After` HTTP header and pauses execution accordingly. To protect folder structures (which must be created top-down before child pages can bind to them), the sync engine enforces an internal folder-creation concurrency ceiling of `min(parallel_threads, 8)`, preventing rapid sequence rate limits.
+
+#### 2. Local State Isolation and Race Conditions (Concurrent Syncs)
+The state of your synchronized pages is tracked in a local, Git-ignored directory under `.confluence-sync/destinations/{id}/sync-state.jsonl`.
+*   **The Limitation**: `confluence-sync` does **not** maintain a cloud-based locking mechanism or distributed state database.
+*   **The Impact**: If multiple CI runners, cron jobs, or team members execute `confluence-sync sync` against the *same* Confluence space simultaneously without sharing the local state directory:
+    - They will not see each other's incremental changes.
+    - They will suffer from write-conflicts and potentially create duplicate pages or overwrite newly pushed content.
+*   **Best Practice**: Ensure that only one runner or environment syncs a given destination at any time, or share the state directory (e.g., caching the state folder between CI/CD pipeline runs).
+
+#### 3. Shallow Clones in CI/CD (Truncated Git Metadata)
+If your configuration has `options.add_git_metadata` set to `true`, the sync tool appends a footer containing the last-updated timestamp and committing author of each file using `git log`.
+*   **The Challenge**: Modern CI/CD environments (such as GitHub Actions or GitLab CI) optimize checkout performance by performing "shallow clones" (typically checking out with `fetch-depth: 1`).
+*   **The Impact**: In a shallow clone, Git's history is truncated. The `git log` command can only see the checkout commit. As a result, the generated footer for *every single page* will display the current runner's checkout commit hash and execution time as the "Last Updated" metadata, rather than the actual author's historical commit.
+*   **The Solution**: When running in automated workflows, configure your checkout step to retrieve the full Git history (e.g., set `fetch-depth: 0` in GitHub's `actions/checkout@v4`).
+
+#### 4. Orphan Page Deletion and Child Node Cascades
+When local Markdown files are deleted from Git, `confluence-sync` identifies them as "orphaned" and automatically issues a `DELETE` request to clean up the space.
+*   **The Challenge**: Manual wiki readers often create sub-pages directly within the Confluence UI, nesting them under pages that were originally pushed by Git.
+*   **The Impact**: Under Confluence REST API v2, deleting a parent page that has nested child pages (whether pushed by Git or created manually) can result in a cascade delete or return a validation error depending on your Confluence permission profiles. 
+*   **Best Practice**: Before deleting files locally, verify that no critical manual documentation has been nested under those pages in Confluence. Use `.confluence-ignore` to exclude specific pages from being tracked as orphans if needed.
+
+#### 5. Deterministic Title Conflict Resolution (Zero Auto-Suffixing)
+*   **The Design Choice**: Unlike naive tools that append suffix indices like `"My Page (1)"` or `"My Page (2)"` when colliding titles are detected, `confluence-sync` completely forbids auto-suffixing (see [ADR 0010](./adr/0010-remove-title-suffixing.md) and [ADR 0012](./adr/0012-confluence-title-mapping-files.md)).
+*   **The Reason**: Suffixing creates non-deterministic page titles and breaks incoming link references upon subsequent syncs. 
+*   **The Behavior**: If a title collision is found during pre-scan, the sync halts immediately. The author is forced to explicitly map a unique title in `.confluence-mapping.yaml`. This guarantees that every page has a deterministic, predictable identity.
+
 ## 3. Installation
 
 ### Homebrew (recommended)
