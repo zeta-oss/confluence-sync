@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+.nox/
+.pytest_cache/
+.coverage
+htmlcov/
+*.whl
+*.tar.gz

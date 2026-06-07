@@ -1,0 +1,63 @@
+# confluence-sync.yml — example configuration
+# Place at: {project-root}/.confluence-sync/confluence-sync.yml
+#
+# Quick start:
+#   confluence-sync init    # creates this file with placeholders
+#   confluence-sync doctor  # validates config + token
+#   confluence-sync sync -d my-destination
+
+destinations:
+
+  # ---------------------------------------------------------------------------
+  # Minimal single-folder destination
+  # ---------------------------------------------------------------------------
+  - id: my-docs
+    name: My Documentation
+    confluence:
+      url: https://your-org.atlassian.net
+      space_key: MYSPACE
+      root_page_title: My Docs Root
+      root_page_id: null      # optional: pin to a specific page ID to avoid
+                              # creating a root page (useful when the space
+                              # homepage already has the right title)
+    source:
+      folders:
+        - path: docs          # relative to project root (must be inside repo)
+          create_root_parent: true   # create a folder page for the root
+          # title: Custom Folder Title   # optional custom title for the folder
+    credentials:
+      username: your@email.com
+      token_env_var: CONFLUENCE_TOKEN   # must be in ~/.local/confluence-sync/.env
+    options:
+      add_git_metadata: true   # add "Last updated on GitHub" footer
+      github_repo_override: null   # set to HTTPS URL if remote is not GitHub
+      dry_run: false
+      parallel_threads: 5
+
+  # ---------------------------------------------------------------------------
+  # Multi-folder destination (combine two source folders)
+  # ---------------------------------------------------------------------------
+  - id: full-site
+    name: Full Site
+    confluence:
+      url: https://your-org.atlassian.net
+      space_key: SITE
+      root_page_title: Documentation
+      root_page_id: null
+    source:
+      folders:
+        - path: guides
+          create_root_parent: true
+          title: User Guides
+        - path: api-reference
+          create_root_parent: true
+          title: API Reference
+    credentials:
+      username: your@email.com
+      token_env_var: CONFLUENCE_TOKEN
+    options:
+      add_git_metadata: true
+      dry_run: false
+      parallel_threads: 8
+      force_sync_paths:
+        - guides/important-page.md   # always update this path, even if unchanged

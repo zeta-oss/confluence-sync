@@ -1,0 +1,7 @@
+pages:
+  index.md: "Smoke Test - Index"
+  sibling.md: "Smoke Test - Sibling"
+  mermaid.md: "Smoke Test - Mermaid"
+  images.md: "Smoke Test - Images"
+  anchors-source.md: "Smoke Test - Anchors Source"
+  anchors-target.md: "Smoke Test - Anchors Target"

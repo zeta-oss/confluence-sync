@@ -1,0 +1,19 @@
+destinations:
+  - id: smoke-live
+    name: Confluence Sync Smoke Tests
+    confluence:
+      url: https://zeta-tm.atlassian.net
+      space_key: CSYNC
+      root_page_title: Confluence Sync Smoke
+      root_page_id: null  # set to a stable page ID once provisioned
+    source:
+      folders:
+        - path: docs
+          create_root_parent: false
+    credentials:
+      username: ramki@zeta.tech
+      token_env_var: CONFLUENCE_TOKEN
+    options:
+      add_git_metadata: true
+      dry_run: false
+      parallel_threads: 3
