@@ -13,7 +13,51 @@
 - **Project root** — the directory containing `.git/`
 - **Sync state** — a local JSONL file recording page IDs; enables incremental updates
 
-## 2. Installation
+---
+
+## 2. Orientation: The Git vs. Confluence Dissonance
+
+When adopting a "Docs-like-Code" approach with `confluence-sync`, engineers and technical writers must recognize a fundamental architectural dissonance between local git-based file systems and the cloud database architecture of Atlassian Confluence. 
+
+Understanding these differences is key to structuring your content effectively and avoiding common sync failures.
+
+### 2.1 Flat vs. Hierarchical Namespace (The Title Collision Problem)
+
+This is the most common point of friction.
+
+*   **In Git / File Systems (Hierarchical Namespace)**:
+    File paths are fully scoped by their parent directories. You can organize files like this without any issue:
+    ```text
+    docs/
+    ├── platform/
+    │   └── introduction.md       # Scoped as docs/platform/introduction.md
+    └── database/
+        └── introduction.md       # Scoped as docs/database/introduction.md
+    ```
+    The filesystem happily allows duplicate file names (`introduction.md`) because their paths are unique.
+*   **In Confluence (Flat Namespace)**:
+    Within any single Confluence Space, **every single Page Title must be globally unique**. Confluence completely ignores your folder structures and hierarchies when validating titles.
+    If you attempt to sync the structure above directly, Confluence will reject the second page with a `400 Bad Request` or `Title already exists` error.
+*   **The Solution**: Page titles must be globally unique across your target space. Use descriptive `# Headings` in your Markdown or leverage a local `.confluence-mapping.yaml` file (see Section 9) to explicitly assign unique page titles while retaining comfortable file paths.
+
+### 2.2 Path-Based vs. ID-Based Identity (The Rename Challenge)
+
+*   **In Git**:
+    Git identifies content by its directory path. If you rename `docs/old.md` to `docs/new.md`, Git registers a deletion at the old path and a creation at the new path.
+*   **In Confluence**:
+    Confluence identifies content using an immutable database ID (`pageId`). A page's title is merely a mutable attribute of that ID. 
+    If you rename a local file, a naive sync tool would delete the old page in Confluence and create a new one, causing links to break, page history to vanish, and comments to be destroyed.
+*   **The Solution**: `confluence-sync` uses a local **Sync State** file (`sync-state.jsonl`) that maps each file key (e.g., `docs/getting-started.md`) to its permanent Confluence `page_id`. This allows the tool to track renames, preserve page IDs, and update titles in-place without losing comments, history, or child attachments.
+
+### 2.3 Pure Containers vs. Rich Primitives (Folders as Pages)
+
+*   **In Git**:
+    Directories are pure container constructs. A folder cannot hold text, images, or commit metadata of its own; only files can contain text.
+*   **In Confluence**:
+    Confluence has no concept of a "naked" folder. Every node in the hierarchy is a **Page**. Folders are actually Page nodes that happen to have child pages nested under them. 
+*   **The Solution**: `confluence-sync` automatically creates a page in Confluence to act as the "Folder". To prevent this folder page from being completely blank, if you place a `README.md` or an `index.md` inside a local directory, the tool will automatically use its content to populate the body of that folder's Confluence page, perfectly blending container hierarchy with rich documentation.
+
+## 3. Installation
 
 ### Homebrew (recommended)
 
@@ -39,7 +83,7 @@ pip install git+https://github.com/zeta-oss/confluence-sync.git
 
 Verify: `confluence-sync --version` and `confluence-sync doctor`
 
-## 3. Authentication
+## 4. Authentication
 
 Create an [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens) and store it:
 
@@ -50,19 +94,19 @@ echo 'CONFLUENCE_TOKEN=your-token-here' >> ~/.local/confluence-sync/.env
 
 **Never** put tokens in `confluence-sync.yml`. The `.env` file is loaded automatically before each sync.
 
-## 4. First-time setup
+## 5. First-time setup
 
 ```bash
 cd ~/Git/my-docs-repo       # must contain .git/
 confluence-sync init         # creates .confluence-sync/confluence-sync.yml
-# Edit .confluence-sync/confluence-sync.yml (see section 5)
+# Edit .confluence-sync/confluence-sync.yml (see section 6)
 confluence-sync doctor -d my-destination
 confluence-sync sync -d my-destination
 ```
 
 `init` also creates `.confluence-sync/.gitignore` which ignores the `destinations/` state directory.
 
-## 5. Configuration reference
+## 6. Configuration reference
 
 Config file: `.confluence-sync/confluence-sync.yml` (or `~/.local/confluence-sync/confluence-sync.yml` as global fallback).
 
@@ -94,7 +138,7 @@ See [`examples/confluence-sync.yml`](../examples/confluence-sync.yml) for an ann
 | `destinations[].options.parallel_threads` | No | Parallelism 1–50 (default: 5) |
 | `destinations[].options.dry_run` | No | Dry-run by default (default: false) |
 
-## 6. Running sync
+## 7. Running sync
 
 ```bash
 # Sync a single destination
@@ -124,7 +168,7 @@ confluence-sync sync -d my-destination --project-root ~/Git/other-repo
 | 1 | Configuration or usage error |
 | 2 | Sync completed but some pages had errors |
 
-## 7. Project layout after init
+## 8. Project layout after init
 
 ```
 my-docs-repo/
@@ -140,7 +184,7 @@ my-docs-repo/
 └── .confluence-mapping.yaml      ← optional title overrides
 ```
 
-## 8. Page titles and `.confluence-mapping.yaml`
+## 9. Page titles and `.confluence-mapping.yaml`
 
 By default, the page title is the first `# Heading` in the Markdown file. To override, create `.confluence-mapping.yaml` in any directory:
 
@@ -154,7 +198,7 @@ folder_title: "Title for This Folder"
 
 **Important:** Title conflicts are not auto-resolved (see [ADR 0012](adr/0012-confluence-title-mapping-files.md)). Use `.confluence-mapping.yaml` to assign unique titles.
 
-## 9. Features
+## 10. Features
 
 - **Folder hierarchy** → Confluence folders/pages
 - **README.md** in a folder becomes a separate page (ADR 0011)
@@ -167,7 +211,7 @@ folder_title: "Title for This Folder"
 - **`.confluence-ignore`** — gitignore-style exclusion patterns
 - **Orphan deletion** — pages removed from Git are deleted from Confluence
 
-## 10. Sync reports
+## 11. Sync reports
 
 After each sync, a report is saved to `.confluence-sync/destinations/{id}/sync-report-{timestamp}.md`.
 
@@ -175,7 +219,7 @@ Statuses: `created` (new page), `updated` (content changed), `skipped` (unchange
 
 Use `--force-update` to re-sync all pages regardless of content hash (useful after Confluence edits that were overwritten).
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
@@ -188,11 +232,11 @@ Use `--force-update` to re-sync all pages regardless of content hash (useful aft
 
 Run `confluence-sync doctor` for a full pre-flight check.
 
-## 12. Migration from `_confluence_sync`
+## 13. Migration from `_confluence_sync`
 
 See [docs/MIGRATION.md](MIGRATION.md).
 
-## 13. FAQ
+## 14. FAQ
 
 **Can I edit pages in Confluence?** No — edits are overwritten on next sync. This is by design.
 
