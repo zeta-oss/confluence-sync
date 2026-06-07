@@ -112,6 +112,37 @@ Images and media files referenced in your Markdown (`![Alt](./assets/image.png)`
     - **Upload Size Limits**: Large files (typically $>10\text{ MB}$, governed by your organization's Confluence attachment configurations) will be rejected by Atlassian with a `413 Payload Too Large` error, failing that page's sync.
     - **Inline Rendering**: Standard image formats (`.png`, `.jpeg`, `.jpg`, `.gif`, `.svg`, `.webp`) are embedded and rendered inline. Other binary files (such as `.pdf`, `.mp4`, `.zip`, etc.) are uploaded to the page's attachment list, but cannot render inline. Users can download them from the Confluence attachments list.
 
+---
+
+### 2.7 Comment Preservation: Page-Level vs. Inline Comments
+
+When your readers provide feedback on Confluence pages that are managed via Git, preserving their comments through subsequent sync cycles is a critical user-experience requirement. Confluence Cloud processes page-level comments and inline comments through entirely distinct database structures, presenting unique synchronization challenges.
+
+#### 1. Page-Level Comments (Standard Footer Comments)
+Page-level comments are stored by Confluence as independent child content nodes of type `comment` linked directly to the parent page's primary database key (`pageId`).
+*   **Behavior during updates**: When `confluence-sync` updates page content using the `PUT /wiki/api/v2/pages/{id}` REST API, the page's text body is overwritten, but **all page-level footer comments are completely preserved** by Confluence.
+*   **The Deletion Risk**: If a sync tool naively deletes and re-creates pages (for example, during a file rename or directory move), the old page ID is deleted, which **permanently destroys all associated page-level comments and comment threads**.
+*   **The Sync Solution**: By retaining persistent page ID mapping in the local `sync-state.jsonl` file and utilizing in-place content updates rather than deletion-creation cycles, `confluence-sync` ensures page-level comments remain perfectly intact.
+
+#### 2. Inline Comments (Highlighted Text-Anchored Comments)
+Inline comments are much more complex. When a reader highlights text and leaves a comment, Confluence inserts an `<ac:inline-comment-marker>` block directly into the page's underlying XML Storage Format to anchor the comment to the specific text:
+```xml
+<p>
+  Refer to our 
+  <ac:inline-comment-marker ac:ref="87342740-a564-38af-a337-4fd80eb5612b">
+    installation parameters
+  </ac:inline-comment-marker> 
+  before proceeding.
+</p>
+```
+*   **The Preservation Problem**: The local Markdown files in Git have no knowledge of the `<ac:inline-comment-marker>` tags or the database reference UUIDs (`ac:ref`). When a developer updates the Markdown file and the sync engine compiles it, the newly generated Confluence Storage Format XML **completely lacks these marker tags**.
+*   **The Result**: If the new XML is pushed as-is to the API, Confluence detects that the inline comment references are missing, and **automatically marks the associated comments as "resolved" or orphaned**, removing them from the visible page margins.
+*   **The Engineering Work Required**: Full retention of inline comments through edits is a highly advanced feature that requires programmatic AST/XML reconstruction:
+    1.  **Read-Before-Write**: Before uploading, the sync tool must call `GET /wiki/api/v2/pages/{id}?body-format=storage` to inspect the existing Confluence page body and parse any active `<ac:inline-comment-marker>` tags and their `ac:ref` UUIDs.
+    2.  **Highlight Extraction**: Map each UUID to the specific text string inside the marker (e.g., `"installation parameters"`).
+    3.  **Fuzzy String Alignment**: Run a diff/merge or edit-distance alignment algorithm (such as Levenshtein distance) to locate where that exact highlighted text block resides in the *newly compiled* document body.
+    4.  **Tag Re-injection**: Re-wrap the matched text with the original `<ac:inline-comment-marker ac:ref="...">` tags in the compiled payload before issuing the `PUT` request. If the anchored text was completely deleted or heavily modified in Git, the sync engine can gracefully allow Confluence to orphan/resolve the comment or re-inject it at a nearby paragraph fallback.
+
 ## 3. Installation
 
 ### Homebrew (recommended)
