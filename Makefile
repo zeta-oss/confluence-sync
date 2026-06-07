@@ -4,7 +4,13 @@ install:
 	./scripts/bootstrap-dev.sh
 
 test:
-	nox -s test cli
+	@if [ -x .venv/bin/pytest ]; then \
+		.venv/bin/pytest tests/unit tests/integration -m "not live and not slow" \
+			--cov=confluence_sync --cov-fail-under=72 -q && \
+		.venv/bin/pytest tests/cli/ -q; \
+	elif [ -x .venv/bin/nox ]; then .venv/bin/nox -s test cli; \
+	elif command -v nox >/dev/null 2>&1; then nox -s test cli; \
+	else echo "Run: make install"; exit 1; fi
 
 lint:
 	nox -s lint

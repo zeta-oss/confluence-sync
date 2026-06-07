@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="${REPO_ROOT}/.venv"
 
 echo "Creating venv at ${VENV}..."
-python3.11 -m venv "${VENV}"
+python3 -m venv "${VENV}"
 
 echo "Installing package in editable mode with dev extras..."
 "${VENV}/bin/pip" install --upgrade pip
