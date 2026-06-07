@@ -99,7 +99,34 @@ echo "[9/11] Updating Homebrew formula..."
 
 # --- Step 10: brew test ---
 echo "[10/11] Testing formula..."
-run_brew_test
+FORMULA_BACKUP="$(mktemp)"
+FORMULA_PATH="${REPO_ROOT}/Formula/confluence-sync.rb"
+cp "${FORMULA_PATH}" "${FORMULA_BACKUP}"
+
+TARBALL_PATH="${REPO_ROOT}/dist/confluence_sync-${VERSION}.tar.gz"
+if [[ ! -f "${TARBALL_PATH}" ]]; then
+  TARBALL_PATH="${REPO_ROOT}/dist/confluence-sync-${VERSION}.tar.gz"
+fi
+ABS_TARBALL="$(cd "$(dirname "${TARBALL_PATH}")" && pwd)/$(basename "${TARBALL_PATH}")"
+
+python3 -c "
+import re
+from pathlib import Path
+path = Path('${FORMULA_PATH}')
+content = path.read_text(encoding='utf-8')
+new_content = re.sub(r'^\s*url\s+\".*?\"', '  url \"file://${ABS_TARBALL}\"', content, count=1, flags=re.MULTILINE)
+path.write_text(new_content, encoding='utf-8')
+"
+
+if run_brew_test; then
+  cp "${FORMULA_BACKUP}" "${FORMULA_PATH}"
+  rm -f "${FORMULA_BACKUP}"
+else
+  cp "${FORMULA_BACKUP}" "${FORMULA_PATH}"
+  rm -f "${FORMULA_BACKUP}"
+  echo "ERROR: brew test failed"
+  exit 1
+fi
 
 # --- Step 11: commit + tag + push ---
 echo "[11/11] Committing and tagging..."
