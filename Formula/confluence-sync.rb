@@ -3,8 +3,8 @@ class ConfluenceSync < Formula
 
   desc "Sync Markdown documentation to Confluence"
   homepage "https://github.com/zeta-oss/confluence-sync"
-  url "https://github.com/zeta-oss/confluence-sync/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "PLACEHOLDER"  # Updated by scripts/publish-brew.sh at release time
+  url "https://github.com/zeta-oss/confluence-sync/archive/refs/tags/v0.1.1.tar.gz"
+  sha256 "e5bf3498ed1bdc499b5ebbb4dce3f9cb1d919f4fcb6ce10b2c28e0b5105751bd"  # Updated by scripts/publish-brew.sh at release time
   license "MIT"
 
   depends_on "python@3.12"
