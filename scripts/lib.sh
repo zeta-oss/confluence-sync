@@ -134,5 +134,33 @@ run_live_smoke() {
 
 run_brew_test() {
   local repo_root="${REPO_ROOT:-$(_confluence_sync_repo_root)}"
-  brew test --formula "${repo_root}/Formula/confluence-sync.rb"
+  local tap_name="local/test"
+  local tap_dir="/opt/homebrew/Library/Taps/local/homebrew-test"
+
+  echo "  Setting up temporary Homebrew tap..."
+  if ! brew tap | grep -q "^${tap_name}$"; then
+    brew tap-new "${tap_name}" >/dev/null 2>&1 || true
+  fi
+
+  mkdir -p "${tap_dir}/Formula"
+  cp "${repo_root}/Formula/confluence-sync.rb" "${tap_dir}/Formula/confluence-sync.rb"
+
+  echo "  Installing formula from tap..."
+  # Uninstall first if already installed
+  brew uninstall -f "${tap_name}/confluence-sync" >/dev/null 2>&1 || true
+
+  if brew install --build-from-source "${tap_name}/confluence-sync"; then
+    echo "  Running brew test..."
+    brew test "${tap_name}/confluence-sync"
+    local exit_code=$?
+
+    echo "  Cleaning up tap..."
+    brew uninstall -f "${tap_name}/confluence-sync" >/dev/null 2>&1 || true
+    brew untap "${tap_name}" >/dev/null 2>&1 || true
+    return ${exit_code}
+  else
+    echo "  ERROR: brew install failed"
+    brew untap "${tap_name}" >/dev/null 2>&1 || true
+    return 1
+  fi
 }
