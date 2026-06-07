@@ -17,82 +17,100 @@
 
 ## 2. Orientation: The Git vs. Confluence Dissonance
 
-When adopting a "Docs-like-Code" approach with `confluence-sync`, engineers and technical writers must recognize a fundamental architectural dissonance between local git-based file systems and the cloud database architecture of Atlassian Confluence. 
+Adopting a "Docs-like-Code" approach with `confluence-sync` introduces a powerful workflow, but it requires engineers and technical writers to understand the fundamental architectural differences between local, git-based filesystems and the database-driven model of Atlassian Confluence Cloud. 
 
-Understanding these differences is key to structuring your content effectively and avoiding common sync failures.
+Confluence Cloud operates on strict cloud metadata paradigms that diverge from local folder/file structures. Aligning your documentation layout with these realities will ensure a flawless, error-free sync.
 
-### 2.1 Flat vs. Hierarchical Namespace (The Title Collision Problem)
+---
 
-This is the most common point of friction.
+### 2.1 Flat vs. Hierarchical Page Namespaces (Title Collisions)
 
-*   **In Git / File Systems (Hierarchical Namespace)**:
-    File paths are fully scoped by their parent directories. You can organize files like this without any issue:
+The most frequent point of friction when transitioning from local files to Confluence is the namespace structure.
+
+*   **In Git / Local Filesystems (Hierarchical Namespace)**:
+    File paths are fully scoped by their parent directories. This structure is perfectly valid and common:
     ```text
     docs/
     ├── platform/
-    │   └── introduction.md       # Scoped as docs/platform/introduction.md
+    │   └── introduction.md       # Unique path: docs/platform/introduction.md
     └── database/
-        └── introduction.md       # Scoped as docs/database/introduction.md
+        └── introduction.md       # Unique path: docs/database/introduction.md
     ```
-    The filesystem happily allows duplicate file names (`introduction.md`) because their paths are unique.
-*   **In Confluence (Flat Namespace)**:
-    Within any single Confluence Space, **every single Page Title must be globally unique**. Confluence completely ignores your folder structures and hierarchies when validating titles.
-    If you attempt to sync the structure above directly, Confluence will reject the second page with a `400 Bad Request` or `Title already exists` error.
-*   **The Solution**: Page titles must be globally unique across your target space. Use descriptive `# Headings` in your Markdown or leverage a local `.confluence-mapping.yaml` file (see Section 9) to explicitly assign unique page titles while retaining comfortable file paths.
+    The filesystem permits duplicate filenames (`introduction.md`) because their paths are distinct.
+*   **In Confluence Pages (Flat Space-Wide Namespace)**:
+    Within any single Confluence Space, **every Page Title must be globally unique**. Confluence validates page titles globally across the entire space, completely ignoring your nesting or folder structures.
+    If you attempt to sync the repository layout above directly, Confluence will reject the creation of the second page with a `400 Bad Request` (Title already exists) error.
+*   **The Sync Solution**: Page titles must be distinct space-wide. You can resolve this by using descriptive first headings (`# Headings`) in your Markdown files or by using a local `.confluence-mapping.yaml` file (see Section 9) to map duplicate filenames to distinct, Confluence-friendly titles.
 
-### 2.2 Path-Based vs. ID-Based Identity (The Rename Challenge)
+---
 
-*   **In Git**:
-    Git identifies content by its directory path. If you rename `docs/old.md` to `docs/new.md`, Git registers a deletion at the old path and a creation at the new path.
-*   **In Confluence**:
-    Confluence identifies content using an immutable database ID (`pageId`). A page's title is merely a mutable attribute of that ID. 
-    If you rename a local file, a naive sync tool would delete the old page in Confluence and create a new one, causing links to break, page history to vanish, and comments to be destroyed.
-*   **The Solution**: `confluence-sync` uses a local **Sync State** file (`sync-state.jsonl`) that maps each file key (e.g., `docs/getting-started.md`) to its permanent Confluence `page_id`. This allows the tool to track renames, preserve page IDs, and update titles in-place without losing comments, history, or child attachments.
+### 2.2 Separated Folder and Page Namespaces (No Cross-Primitive Collisions)
 
-### 2.3 Structure vs. Content: Native Folder Support
+Unlike older versions of Confluence, modern Confluence Cloud separates folders from pages.
+
+*   **The Namespace Separation**:
+    In Confluence REST API v2, native Folders and Pages exist as separate primitives and reside in **completely separate namespaces**.
+*   **The Benefit**:
+    A folder named `setup` will **never** collide with a page named `setup`. They can co-exist within the same parent directory or space without causing namespace collisions.
+*   **The Constraint**:
+    Folders are allowed to have duplicate titles space-wide (for example, you can have a folder named `setup` under `development/` and another folder named `setup` under `production/`). However, folder titles must be unique *under the same parent directory*. `confluence-sync` tracks folder parental structures separately in its sync state to keep child page nesting fully aligned.
+
+---
+
+### 2.3 Path-Based vs. ID-Based Identity (The Rename Challenge)
+
+Tracking the identity of documents during renames and moves is critical to maintaining a healthy wiki.
+
+*   **In Git (Path-Based Identity)**:
+    Git identifies file identity by its path. If you rename `docs/old.md` to `docs/new.md`, Git registers a deletion of the old path and a creation of the new path.
+*   **In Confluence (ID-Based Identity)**:
+    Confluence identifies documents by a permanent database ID (`pageId`). A page's title is simply a mutable attribute of that ID. 
+    If a sync tool naively followed Git's path-based deletions and creations during a rename, it would delete the old page in Confluence and create a new one. This would break incoming links, erase the page's revision history, and destroy user comments.
+*   **The Sync Solution**: `confluence-sync` maintains a local **Sync State** file (`sync-state.jsonl`) that maps each local file path to its permanent Confluence `page_id`. When you rename a file or move it to a different directory locally, the sync engine detects the change, issues an in-place title update or parent move API call, and preserves your page history, incoming links, and comments completely.
+
+---
+
+### 2.4 Structure vs. Content: Native Folder Support
+
+Representing directory containers in a wiki requires separating structure from actual text content.
 
 *   **In Git**:
     Directories are pure structural containers. A folder cannot hold text, images, or commit metadata of its own; only files can contain text.
 *   **In Confluence**:
-    Historically, Confluence had no native "folder" concept—directories had to be represented as regular Page nodes, meaning structural directories and content pages competed for names and namespaces.
-    Modern Confluence Cloud REST API v2 introduces **Native Folder Support** (`/wiki/api/v2/folders`). Native Folders are structural-only containers with absolutely no body content.
-*   **The Solution**: `confluence-sync` leverages REST API v2 to create native folders for your local subdirectories. 
-    - Folders are kept completely separate from pages.
-    - Because folders are structure-only, they have no text body. If you have a `README.md` or `index.md` inside a local subdirectory, `confluence-sync` automatically uploads it as a standard **Page nested under that folder**, rather than trying to write content to the folder itself.
-    - Directory-level links (like `[Guide](../guides/)`) are automatically parsed and mapped to point to that folder's `README.md` or `index.md` page for maximum convenience.
+    Historically, folders were represented as regular pages (directory pages), which led to structural nodes competing with document nodes for titles and namespaces. 
+    Modern Confluence Cloud REST API v2 provides **Native Folder Support** (`/wiki/api/v2/folders`). Native folders are structure-only containers that do not support a text body.
+*   **The Sync Solution**: `confluence-sync` leverages API v2 to create native folders for your local subdirectories.
+    - Folders are kept separate from pages and are used purely for visual nesting.
+    - Because native folders cannot hold text, if you place a `README.md` or an `index.md` inside a local subdirectory, the sync engine automatically uploads it as a standard **Page nested under that folder**, rather than trying to write body content directly to the folder container.
+    - Relative directory links (such as `[Guide](../guides/)`) are automatically parsed and routed to point to the nested folder's `README.md` or `index.md` page for convenient navigation.
 
-### 2.4 Separated Folder and Page Namespaces (No Collisions)
-
-*   **The Concept**:
-    Because native Folders and Pages are different primitives in Confluence v2, **folders and pages reside in separate namespaces**.
-*   **The Benefit**:
-    A folder named `setup` will **never** collide with a page named `setup`. They can happily co-exist within the same parent or space, entirely resolving title collision bugs between structure and content.
-*   **The Constraint**:
-    Folders can also co-exist with the same title under different parent folders. However, under the *same* parent, folder titles must be unique. `confluence-sync` tracks folders separately in its sync state to ensure we always bind child pages to the correct, intended folder parent ID. Use `.confluence-mapping.yaml` to override any folder titles if customization is required.
+---
 
 ### 2.5 Markdown Links: Supported Formats & Constraints
 
-While `confluence-sync` performs extensive HTML parsing and link rewriting, not all Markdown link formats can be parsed or resolved cleanly into Confluence macros.
+While `confluence-sync` performs extensive HTML parsing and relative link rewriting, certain syntax restrictions apply to guarantee clean URL transformations.
 
-*   **Supported Formats (Highly Robust)**:
-    - **Relative files**: `[Guide](../guides/usage.md)`
-    - **Relative files with local anchors**: `[Installation](../setup.md#installation-steps)`
-    - **Directory links**: `[Parent](../platform/)` (resolves automatically to that folder's `README.md` / `index.md` if present).
+*   **Supported Link Formats (Highly Robust)**:
+    - **Relative files**: `[Guide](../guides/usage.md)` (converted to native Confluence links).
+    - **Relative files with anchors**: `[Installation](../setup.md#installation-steps)` (converted to Fabric-safe Confluence anchor links).
+    - **Relative directories**: `[Parent](../platform/)` (automatically routes to that directory's `README.md` or `index.md` if present).
     - **Standard web links**: `[Google](https://google.com)` (kept as-is).
-*   **Unsupported/Partially Broken Formats**:
-    - **Extension-less relative links**: `[Setup](../setup)` — `confluence-sync` relies on the `.md` extension to identify and map the file in the local title pre-scan cache. Excluding `.md` will cause the sync to treat it as an external relative URL and render a broken link.
-    - **Absolute local filesystem paths**: `[Doc](/Users/username/docs/usage.md)` or `[Doc](C:\docs\usage.md)` — these are ignored to prevent local development path exposure.
-    - **Bypassing Markdown with raw HTML anchors**: `<a href="../usage.md">Usage</a>` — raw HTML elements bypassing standard Markdown syntax cannot be reliably transformed and may lead to broken URLs in the target.
+*   **Unsupported/Restricted Link Formats**:
+    - **Extension-less relative links**: `[Setup](../setup)` is unsupported. The title pre-scanner relies on the `.md` extension to map file paths to final Confluence page titles. Excluding the extension prevents local resolution, causing the sync to treat it as a broken external link.
+    - **Absolute local filesystem paths**: `[Doc](/Users/username/docs/usage.md)` or `[Doc](C:\docs\usage.md)` are blocked and ignored to prevent local development environment leaks.
+    - **Raw HTML anchor tags**: Raw `<a href="../usage.md">Usage</a>` bypasses the Markdown AST parser and cannot be reliably rewritten. Always use standard Markdown link format.
+
+---
 
 ### 2.6 Media, Image & Attachment Limitations
 
-Images and media referenced in Markdown (`![Alt](./assets/image.png)`) are automatically converted, uploaded to Atlassian as page attachments, and rewritten to Confluence `ac:image` storage tags.
+Images and media files referenced in your Markdown (`![Alt](./assets/image.png)`) are converted, uploaded to Atlassian as page attachments, and rewritten to Confluence `ac:image` storage tags.
 
 *   **Security Repo Boundary**:
-    `confluence-sync` enforces strict repository boundary isolation to prevent security leaks. All referenced asset paths **must reside within the designated `--project-root` boundary**. Any paths trying to walk out of the repository (e.g. `![Leak](../../../private-keys/credentials.png)`) will be blocked and ignored by the sync preparer.
-*   **Multimedia Limitations**:
-    - **Atlassian Upload Size Limits**: Very large assets (typically >10MB, depending on your organization's Confluence attachment size configurations) will be rejected by Atlassian with a `413 Payload Too Large` error, failing that page's sync.
-    - **Video/Audio & Binary Documents**: While standard image formats (`.png`, `.jpeg`, `.jpg`, `.gif`, `.svg`, `.webp`) are embedded cleanly, other rich documents (like `.pdf`, `.mp4`, `.zip` etc.) are uploaded to the page's attachments list, but will not render inline in the body. Users must download them from the Confluence attachments menu or insert them using native Confluence macros.
+    To prevent data leakage, `confluence-sync` enforces strict directory containment. All referenced assets **must reside within the designated `--project-root` boundary**. Any asset path walking out of the repository (for example, `![Leak](../../../private-keys/credentials.png)`) will be blocked and ignored.
+*   **Multimedia Restrictions**:
+    - **Upload Size Limits**: Large files (typically $>10\text{ MB}$, governed by your organization's Confluence attachment configurations) will be rejected by Atlassian with a `413 Payload Too Large` error, failing that page's sync.
+    - **Inline Rendering**: Standard image formats (`.png`, `.jpeg`, `.jpg`, `.gif`, `.svg`, `.webp`) are embedded and rendered inline. Other binary files (such as `.pdf`, `.mp4`, `.zip`, etc.) are uploaded to the page's attachment list, but cannot render inline. Users can download them from the Confluence attachments list.
 
 ## 3. Installation
 
