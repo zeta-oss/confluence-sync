@@ -3,7 +3,7 @@
 # Usage: ./scripts/release-preflight.sh  (or: make release-preflight)
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # shellcheck source=lib.sh
 source "${REPO_ROOT}/scripts/lib.sh"
 
@@ -40,39 +40,79 @@ if [[ ! -d "${REPO_ROOT}/tests/live_smoke/fixture" ]]; then
 fi
 echo "  ✓ Smoke config and fixture present"
 
-# Recent successful smoke (make smoke gate)
+# Recent successful smoke (make smoke gate) — JSON {timestamp, sha} required
 smoke_pass_file="${HOME}/.local/confluence-sync/smoke-last-pass"
 if [[ ! -f "${smoke_pass_file}" ]]; then
   _fail "No recorded smoke pass. Run: make smoke"
 fi
-if ! smoke_ts="$(cat "${smoke_pass_file}")"; then
-  _fail "Could not read ${smoke_pass_file}"
-fi
-if ! python3 - <<PY
+if ! smoke_gate_output="$(python3 - <<PY
+import json
+import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
-raw = """${smoke_ts}""".strip()
+path = Path("""${smoke_pass_file}""")
+raw = path.read_text(encoding="utf-8").strip()
+allow_stale_sha = """${SMOKE_GATE_ALLOW_STALE_SHA:-}""" == "1"
+head_sha = subprocess.check_output(
+    ["git", "-C", """${REPO_ROOT}""", "rev-parse", "HEAD"], text=True
+).strip()
+max_age = timedelta(hours=${SMOKE_GATE_MAX_AGE_HOURS})
+
 try:
-    ts = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    # Legacy plain timestamp (pre SHA gate)
+    if raw and "T" in raw and raw[0].isdigit():
+        print("legacy", file=sys.stderr)
+        sys.exit(3)
+    print("invalid", file=sys.stderr)
+    sys.exit(1)
+
+if not isinstance(data, dict):
+    sys.exit(1)
+ts_raw = data.get("timestamp")
+recorded_sha = data.get("sha")
+if not ts_raw or not recorded_sha:
+    sys.exit(1)
+try:
+    ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
 except ValueError:
     sys.exit(1)
 if ts.tzinfo is None:
     ts = ts.replace(tzinfo=timezone.utc)
 age = datetime.now(timezone.utc) - ts
-max_age = timedelta(hours=${SMOKE_GATE_MAX_AGE_HOURS})
 if age > max_age:
-    print(f"stale:{age}", file=sys.stderr)
+    print(f"stale_ts:{ts_raw}", file=sys.stderr)
     sys.exit(2)
+if recorded_sha != head_sha:
+    if allow_stale_sha:
+        print(f"stale_sha_allowed:{recorded_sha}!={head_sha}", file=sys.stderr)
+    else:
+        print(f"stale_sha:{recorded_sha}!={head_sha}", file=sys.stderr)
+        sys.exit(4)
+print(f"{ts_raw}|{recorded_sha}")
 PY
-then
+)"; then
   rc=$?
   if [[ "${rc}" -eq 2 ]]; then
     _fail "Smoke pass is older than ${SMOKE_GATE_MAX_AGE_HOURS}h. Re-run: make smoke"
   fi
-  _fail "Invalid timestamp in ${smoke_pass_file}. Re-run: make smoke"
+  if [[ "${rc}" -eq 3 ]]; then
+    _fail "Legacy smoke-last-pass format (timestamp only). Re-run: make smoke"
+  fi
+  if [[ "${rc}" -eq 4 ]]; then
+    _fail "Smoke pass SHA does not match current commit. Re-run: make smoke (or set SMOKE_GATE_ALLOW_STALE_SHA=1 for doc-only changes)"
+  fi
+  _fail "Invalid smoke-last-pass in ${smoke_pass_file}. Re-run: make smoke"
 fi
-echo "  ✓ Recent smoke pass recorded (${smoke_ts})"
+smoke_ts="${smoke_gate_output%%|*}"
+smoke_sha="${smoke_gate_output#*|}"
+if [[ "${SMOKE_GATE_ALLOW_STALE_SHA:-}" == "1" && "${smoke_sha}" != "$(git -C "${REPO_ROOT}" rev-parse HEAD)" ]]; then
+  echo "  ⚠ Smoke SHA mismatch allowed (SMOKE_GATE_ALLOW_STALE_SHA=1)"
+fi
+echo "  ✓ Recent smoke pass recorded (${smoke_ts}, sha ${smoke_sha:0:8})"
 
 # Stale ephemeral workspace from interrupted run
 if [[ -f "${HOME}/.local/confluence-sync/smoke-session.json" ]]; then

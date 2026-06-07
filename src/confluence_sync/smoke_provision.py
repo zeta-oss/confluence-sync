@@ -91,21 +91,27 @@ class SmokeProvisioner:
             )
             return dest, ws
 
-        try:
-            space_key = self._create_private_space(run_id)
-            root_title = f"Smoke Root {run_id}"
-            ws = EphemeralWorkspace(
-                run_id=run_id,
-                space_key=space_key,
-                mode="ephemeral_space",
-                root_page_title=root_title,
-            )
-            patched = self._patch_dest(dest, ws)
-            self._save_session(ws)
-            print(f"  ✓ Created ephemeral space: {space_key} (run {run_id})")
-            return patched, ws
-        except Exception as exc:
-            print(f"  ⚠ Space creation failed ({exc}); using ephemeral root page fallback")
+        import os
+
+        force_fallback = os.getenv("SMOKE_FORCE_FALLBACK", "").strip() == "1"
+        if not force_fallback:
+            try:
+                space_key = self._create_private_space(run_id)
+                root_title = f"Smoke Root {run_id}"
+                ws = EphemeralWorkspace(
+                    run_id=run_id,
+                    space_key=space_key,
+                    mode="ephemeral_space",
+                    root_page_title=root_title,
+                )
+                patched = self._patch_dest(dest, ws)
+                self._save_session(ws)
+                print(f"  ✓ Created ephemeral space: {space_key} (run {run_id})")
+                return patched, ws
+            except Exception as exc:
+                print(f"  ⚠ Space creation failed ({exc}); using ephemeral root page fallback")
+        else:
+            print("  ℹ SMOKE_FORCE_FALLBACK=1 — skipping private space creation")
 
         fallback_key = self._fallback_space_key()
         root_title = f"Smoke Root {run_id}"

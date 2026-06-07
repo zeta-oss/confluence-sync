@@ -115,6 +115,9 @@ def _smoke_run(args: argparse.Namespace) -> int:
         errors = [r for r in results if r.status == "error"]
         if errors:
             print(f"  ✗ {len(errors)} errors in clean sync", file=sys.stderr)
+            for result in errors:
+                msg = result.error_message or "unknown error"
+                print(f"    {result.file_path}: {msg}", file=sys.stderr)
             return 1
 
         from confluence_sync.sync_state import load_sync_state

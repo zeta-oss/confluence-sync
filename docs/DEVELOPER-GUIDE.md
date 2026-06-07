@@ -116,20 +116,26 @@ make smoke         # needs CONFLUENCE_TOKEN
 
 ## 7. Testing strategy
 
-| Layer | When | Token | Command |
-|-------|------|-------|---------|
-| Unit | `make test` | No | `pytest tests/unit/` |
-| Integration (mocked) | `make test` | No | `pytest tests/integration/` |
-| CLI subprocess | `make test` | No | `pytest tests/cli/` |
-| Live smoke | `make release` only | Yes | `confluence-sync smoke run -d smoke-live` |
+Six layers (see [E2E-TEST-PLAN.md](E2E-TEST-PLAN.md)):
 
-Coverage gate: ≥75% (`fail_under = 75` in `pyproject.toml`).
+| Layer | Command | When | Token |
+|-------|---------|------|-------|
+| L1 Unit + CLI | `make test` | Every commit | No |
+| L2 Shell scripts | `make test-scripts` | Every commit (especially `scripts/`) | No |
+| L3 Pipeline (mocked) | `make test-pipeline` | Every commit (especially `sync.py`, `smoke*.py`) | No |
+| L1–L3 combined | `make test-all` | Every change touching sync/smoke/scripts | No |
+| L4 Live smoke | `make smoke` | Once per release candidate | Yes |
+| L4 fallback path | `make smoke-fallback` | Optional; personal-space provisioning | Yes |
+| L5 Release rehearsal | `make release-rehearsal` | Mandatory before tag (same machine/commit) | Yes |
+| L6 Consumer dry-run | `make verify-consumers` | After push/install | Yes |
+
+Coverage gate: ≥72% on core modules (`fail_under = 72` in `pyproject.toml`).
 
 **Cleanup policy (ADR 0024):**
 - All Git repos and state dirs go in `pytest tmp_path`
 - `HOME` is monkeypatched per test — no test touches `~/.local/confluence-sync/`
 - Live smoke copies fixture to tmp, never mutates committed files
-- Confluence teardown runs in `finally` block (always)
+- Ephemeral Confluence spaces deleted via `SmokeProvisioner.destroy_workspace`
 
 ## 8. Adding a feature
 

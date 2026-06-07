@@ -71,10 +71,45 @@ run_smoke_reset() {
 }
 
 _mark_smoke_pass() {
-  local stamp
+  local repo_root stamp sha
+  repo_root="${REPO_ROOT:-$(_confluence_sync_repo_root)}"
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  sha="$(git -C "${repo_root}" rev-parse HEAD)"
   mkdir -p "${HOME}/.local/confluence-sync"
-  echo "${stamp}" > "${HOME}/.local/confluence-sync/smoke-last-pass"
+  python3 - <<PY
+import json
+from pathlib import Path
+
+payload = {"timestamp": "${stamp}", "sha": "${sha}"}
+Path("${HOME}/.local/confluence-sync/smoke-last-pass").write_text(
+    json.dumps(payload) + "\n", encoding="utf-8"
+)
+PY
+}
+
+assert_clean_main() {
+  local repo_root="${REPO_ROOT:-$(_confluence_sync_repo_root)}"
+  local branch
+  branch="$(git -C "${repo_root}" branch --show-current)"
+  if [[ "${branch}" != "main" ]]; then
+    echo "ERROR: Must be on main branch (current: ${branch})"
+    return 1
+  fi
+  if ! git -C "${repo_root}" diff --quiet || ! git -C "${repo_root}" diff --cached --quiet; then
+    echo "ERROR: Working tree is not clean. Commit or stash changes first."
+    return 1
+  fi
+}
+
+check_mmdc() {
+  if command -v mmdc &>/dev/null; then
+    return 0
+  fi
+  if npx --yes @mermaid-js/mermaid-cli --version &>/dev/null 2>&1; then
+    return 0
+  fi
+  echo "ERROR: mmdc not found. Install: npm install -g @mermaid-js/mermaid-cli"
+  return 1
 }
 
 run_release_preflight() {

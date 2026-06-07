@@ -67,6 +67,7 @@ class SmokeVerify:
         self._check_page_count(history)
         self._check_mermaid_attachment(history)
         self._check_image_attachments(history)
+        self._check_anchor_links(history)
 
         if self._failures:
             msg = "\n".join(f"  ✗ {f}" for f in self._failures)
@@ -144,3 +145,58 @@ class SmokeVerify:
                     )
         except Exception as exc:
             self._failures.append(f"Could not verify image attachments: {exc}")
+
+    def _page_storage_html(self, page_id: str) -> str:
+        data = self._get(f"pages/{page_id}", params={"body-format": "storage"})
+        body = data.get("body") or {}
+        storage = body.get("storage")
+        if isinstance(storage, dict) and storage.get("value"):
+            return storage["value"]
+        return body.get("value", "") or ""
+
+    def _check_anchor_links(self, history: Dict[str, Any]) -> None:
+        """Verify cross-page anchor links in anchors-source / anchors-target fixture pages."""
+        source_key = next(
+            (k for k in history if k.endswith("anchors-source.md")), None
+        )
+        target_key = next(
+            (k for k in history if k.endswith("anchors-target.md")), None
+        )
+        if not source_key or not target_key:
+            print("  ⚠ Anchor fixture pages missing from sync state — skipping link check")
+            return
+
+        source_id = history[source_key].get("page_id")
+        target_id = history[target_key].get("page_id")
+        if not source_id or not target_id:
+            self._failures.append("Anchor fixture pages missing page_id in sync state")
+            return
+
+        try:
+            source_html = self._page_storage_html(str(source_id))
+            target_html = self._page_storage_html(str(target_id))
+
+            has_source_link = (
+                "#my-section" in source_html
+                or 'ac:anchor="my-section"' in source_html
+                or "ac:anchor='my-section'" in source_html
+            )
+            if not has_source_link:
+                self._failures.append(
+                    f"anchors-source page {source_id} missing link to #my-section"
+                )
+            else:
+                print("  ✓ Anchor link on anchors-source page")
+
+            has_target_heading = (
+                'id="my-section"' in target_html
+                or "id='my-section'" in target_html
+            )
+            if not has_target_heading:
+                self._failures.append(
+                    f"anchors-target page {target_id} missing heading id my-section"
+                )
+            else:
+                print("  ✓ Anchor target heading on anchors-target page")
+        except Exception as exc:
+            self._failures.append(f"Could not verify anchor links: {exc}")

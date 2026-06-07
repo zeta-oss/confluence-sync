@@ -45,6 +45,37 @@ def test_init_help_exits_0():
     assert result.returncode == 0
 
 
+def test_smoke_run_help_shows_config():
+    result = _run("smoke", "run", "--help")
+    assert result.returncode == 0
+    assert "--config" in result.stdout
+
+
+def test_doctor_smoke_live_with_token(tmp_path):
+    import os
+    import stat
+
+    repo_root = Path(__file__).resolve().parents[2]
+    config = repo_root / "tests" / "live_smoke" / "confluence-sync.yml"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    mmdc = fake_bin / "mmdc"
+    mmdc.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    mmdc.chmod(mmdc.stat().st_mode | stat.S_IEXEC)
+
+    env = os.environ.copy()
+    env["CONFLUENCE_TOKEN"] = "test-token"
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    result = subprocess.run(
+        [sys.executable, "-m", "confluence_sync.cli", "doctor", "-d", "smoke-live", "--config", str(config)],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0
+    assert "CONFLUENCE_TOKEN" in result.stdout or "Token env" in result.stdout
+
+
 def test_sync_missing_destination_shows_hint(tmp_path):
     """sync -d missing should exit 1 and mention available IDs."""
     cs_dir = tmp_path / ".confluence-sync"

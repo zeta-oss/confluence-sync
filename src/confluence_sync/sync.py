@@ -680,6 +680,11 @@ def sync_destination(
         skipped = sum(1 for r in results if r.status == "skipped")
         errors = sum(1 for r in results if r.status == "error")
         print(f"\nSync complete: {created} created, {updated} updated, {skipped} skipped, {errors} errors")
+        if errors:
+            for result in results:
+                if result.status == "error":
+                    msg = result.error_message or "unknown error"
+                    print(f"  ✗ {result.file_path}: {msg}")
 
     except Exception as e:
         print(f"\n✗ Sync failed: {e}")
