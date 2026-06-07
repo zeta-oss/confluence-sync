@@ -37,8 +37,15 @@ fi
 echo "  URL:    $TARBALL_URL"
 echo "  SHA256: $SHA256"
 
-# Rewrite url and sha256 in formula
-sed -i '' "s|url \".*\"|url \"${TARBALL_URL}\"|" "$FORMULA"
-sed -i '' "s|sha256 \".*\"|sha256 \"${SHA256}\"|" "$FORMULA"
+# Rewrite url and sha256 in formula (first occurrence only)
+python3 -c "
+import re
+from pathlib import Path
+path = Path('${FORMULA}')
+content = path.read_text(encoding='utf-8')
+content = re.sub(r'^\s*url\s+\".*?\"', '  url \"${TARBALL_URL}\"', content, count=1, flags=re.MULTILINE)
+content = re.sub(r'^\s*sha256\s+\".*?\"', '  sha256 \"${SHA256}\"', content, count=1, flags=re.MULTILINE)
+path.write_text(content, encoding='utf-8')
+"
 
 echo "✓ Formula updated: $FORMULA"

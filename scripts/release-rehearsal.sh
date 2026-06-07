@@ -74,11 +74,14 @@ trap '_restore_formula; run_smoke_reset' EXIT
 ./scripts/publish-brew.sh "${REHEARSAL_VERSION}"
 
 ABS_TARBALL="$(cd "$(dirname "${REHEARSAL_TARBALL}")" && pwd)/$(basename "${REHEARSAL_TARBALL}")"
-if [[ "$(uname)" == "Darwin" ]]; then
-  sed -i '' "s|url \".*\"|url \"file://${ABS_TARBALL}\"|" "${FORMULA_PATH}"
-else
-  sed -i "s|url \".*\"|url \"file://${ABS_TARBALL}\"|" "${FORMULA_PATH}"
-fi
+python3 -c "
+import re
+from pathlib import Path
+path = Path('${FORMULA_PATH}')
+content = path.read_text(encoding='utf-8')
+new_content = re.sub(r'^\s*url\s+\".*?\"', '  url \"file://${ABS_TARBALL}\"', content, count=1, flags=re.MULTILINE)
+path.write_text(new_content, encoding='utf-8')
+"
 
 # --- Step 8: brew test ---
 echo "[8/8] Testing formula..."
