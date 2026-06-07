@@ -27,9 +27,10 @@ class TestCLIHelp:
 
     def test_version_exits_0(self):
         """confluence-sync --version exits 0."""
+        from confluence_sync import __version__
         result = run_cli("--version")
         assert result.returncode == 0
-        assert "0.1.0" in result.stdout
+        assert __version__ in result.stdout
 
     def test_sync_help(self):
         """confluence-sync sync --help exits 0."""

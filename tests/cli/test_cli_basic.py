@@ -23,9 +23,10 @@ def test_help_exits_0():
 
 
 def test_version():
+    from confluence_sync import __version__
     result = _run("--version")
     assert result.returncode == 0
-    assert "0.1.0" in result.stdout
+    assert __version__ in result.stdout
 
 
 def test_sync_without_destination_exits_1(tmp_path):
