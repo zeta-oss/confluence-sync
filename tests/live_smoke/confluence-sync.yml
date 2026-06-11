@@ -11,7 +11,7 @@ destinations:
         - path: docs
           create_root_parent: false
     credentials:
-      username: ramki@zeta.tech
+      username: your@email.com
       token_env_var: CONFLUENCE_TOKEN
     options:
       auto_provision_space: true
